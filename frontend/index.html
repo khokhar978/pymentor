@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Practice | Python Practice</title>
+    <meta name="description" content="Write and test Python code with step-by-step guidance.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <!-- marked.js -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- canvas-confetti -->
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
+    <!-- Monaco loader -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="practice-body">
+
+    <!-- Header -->
+    <header class="site-header">
+        <a href="/" class="back-link">&#8592; Problems</a>
+        <span class="breadcrumb-sep">/</span>
+        <span class="problem-title-header" id="headerProblemTitle">Loading...</span>
+        <div class="header-spacer"></div>
+        <div id="studentBadge" class="student-badge" title="Click to update details">
+            <span>🎓</span>
+            <span class="s-name" id="studentNameDisplay">Not Logged In</span>
+            <span class="s-sec" id="studentSecDisplay">Enter Details</span>
+        </div>
+        <button id="switchStudentBtn" class="btn-switch">Switch</button>
+    </header>
+
+    <!-- Main layout -->
+    <div class="practice-layout">
+
+        <!-- Left: Problem Panel -->
+        <aside class="problem-panel">
+            <div class="pp-meta">
+                <span id="difficultyBadge" class="difficulty-badge easy">Easy</span>
+                <span id="topicBadge" class="concept-tag">—</span>
+                <span class="attempt-pill" id="attemptCounter">Attempt #1</span>
+            </div>
+            <div class="pp-body">
+                <h1 class="pp-title" id="problemTitle">Select a Problem</h1>
+
+                <div>
+                    <div class="section-label">Problem Statement</div>
+                    <div class="problem-desc" id="problemDescription">Go to the Problems page and select a problem to start.</div>
+                </div>
+
+                <div>
+                    <div class="section-label">Sample I/O</div>
+                    <div class="io-blocks">
+                        <div class="io-block">
+                            <div class="io-block-header">
+                                <span>Input</span>
+                                <button id="copyInputBtn" class="copy-btn">Copy</button>
+                            </div>
+                            <div class="io-block-body" id="sampleInputText">—</div>
+                        </div>
+                        <div class="io-block">
+                            <div class="io-block-header">
+                                <span>Expected Output</span>
+                            </div>
+                            <div class="io-block-body" id="sampleOutputText">—</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="section-label">Concepts</div>
+                    <div class="concepts-row" id="conceptsList">
+                        <span class="concept-tag">—</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Right: Editor + Panels -->
+        <section class="editor-section">
+            <!-- Monaco Editor -->
+            <div class="editor-area">
+                <div id="monacoEditor"></div>
+            </div>
+
+            <!-- Toolbar -->
+            <div class="editor-footer">
+                <select id="levelSelect" class="level-select" title="Guidance Level">
+                    <option value="1">&#x1F7E2; Baby Steps</option>
+                    <option value="2">&#x1F7E1; Guided</option>
+                    <option value="3">&#x1F534; Challenge</option>
+                </select>
+                <div class="footer-spacer"></div>
+                <span class="attempt-badge" id="attemptBadge">Attempt #1</span>
+                <button id="runBtn" class="btn-run">
+                    <span id="runIcon">&#9654;</span>
+                    <span id="runText">Run</span>
+                    <div class="spinner hidden" id="runSpinner"></div>
+                </button>
+                <button id="guidanceBtn" class="btn-guidance">
+                    <span id="guidanceIcon">&#x1F4AC;</span>
+                    <span id="guidanceText">Get Guidance</span>
+                    <div class="spinner hidden" id="guidanceSpinner"></div>
+                </button>
+            </div>
+
+            <!-- Dual Panels -->
+            <div class="panels-row">
+                <!-- Output console -->
+                <div class="output-panel">
+                    <div class="panel-header">
+                        <span class="panel-title">Output</span>
+                        <span id="outputStatus" class="status-pending">—</span>
+                    </div>
+                    <div class="output-body" id="outputBody">
+                        <span class="output-placeholder">Click &#9654; Run to see output here...</span>
+                    </div>
+                </div>
+
+                <!-- Guidance feedback -->
+                <div class="guidance-panel">
+                    <div class="panel-header">
+                        <span class="panel-title">Guidance</span>
+                        <span id="guidanceStatus" class="status-pending">—</span>
+                    </div>
+                    <div class="guidance-body" id="guidanceBody">
+                        <div class="placeholder-text">
+                            Run your code first, then click<br>
+                            <strong>Get Guidance</strong> for step-by-step feedback.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Student Login Modal -->
+    <div id="studentModal" class="modal-backdrop hidden">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h2>Student Lab Login 🎓</h2>
+                <p>Authorized access only. Log in with your assigned details.</p>
+            </div>
+            <div id="loginAlert" class="alert-box hidden" style="color:var(--error);font-size:12.5px;background:var(--error-bg);padding:8px 12px;border-radius:4px;margin-bottom:12px;border:1px solid #fecaca;"></div>
+            <form id="studentForm" class="modal-form">
+                <div class="form-group">
+                    <label for="studentSecInput">Section</label>
+                    <select id="studentSecInput" required>
+                        <option value="E">Section E</option>
+                        <option value="F">Section F</option>
+                        <option value="G">Section G</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="studentRollInput">Roll Number</label>
+                    <input type="text" id="studentRollInput" placeholder="Enter your Roll Number" required autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label for="studentPwdInput">Password</label>
+                    <input type="password" id="studentPwdInput" placeholder="Enter password" required autocomplete="current-password">
+                </div>
+                <button type="submit" class="btn-primary" id="loginSubmitBtn">Log In to Lab</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="/js/app.js"></script>
+</body>
+</html>
