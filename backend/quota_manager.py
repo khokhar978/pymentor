@@ -21,7 +21,10 @@ try:
 except Exception:
     PACIFIC_TZ = None
 
-from pymentor.backend.database import get_connection
+try:
+    from pymentor.backend.database import get_connection
+except ImportError:
+    from backend.database import get_connection
 
 logger = logging.getLogger("pymentor.quota")
 _lock = threading.Lock()

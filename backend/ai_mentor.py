@@ -15,12 +15,20 @@ env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"
 load_dotenv(dotenv_path=env_path)
 load_dotenv()
 
-from pymentor.backend.quota_manager import (
-    get_available_models,
-    record_model_usage,
-    record_model_rate_limited,
-    MODEL_CONFIGS
-)
+try:
+    from pymentor.backend.quota_manager import (
+        get_available_models,
+        record_model_usage,
+        record_model_rate_limited,
+        MODEL_CONFIGS
+    )
+except ImportError:
+    from backend.quota_manager import (
+        get_available_models,
+        record_model_usage,
+        record_model_rate_limited,
+        MODEL_CONFIGS
+    )
 
 FALLBACK_MODELS = [cfg["model"] for cfg in MODEL_CONFIGS]
 

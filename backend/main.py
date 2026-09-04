@@ -4,36 +4,95 @@ Serves REST API and multi-page frontend.
 """
 
 import os
+import sys
 import json
+import time
 import logging
-logger = logging.getLogger("pymentor")
+from logging.handlers import RotatingFileHandler
 from typing import Optional, List
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from pymentor.backend.database import get_connection, init_db
-from pymentor.backend.ai_mentor import evaluate_code, simulate_run, get_api_key
+# ─────────────────────────────────────────────
+# DUAL AUDIT LOGGING SETUP (Console + logs.txt)
+# ─────────────────────────────────────────────
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs.txt")
+LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+formatter = logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT)
+
+# File Handler: writes clean audit trail to logs.txt
+file_handler = RotatingFileHandler(LOG_FILE, maxBytes=15*1024*1024, backupCount=3, encoding="utf-8")
+file_handler.setFormatter(formatter)
+file_handler.setLevel(logging.INFO)
+
+# Console Handler: displays live messages in the server terminal
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(formatter)
+console_handler.setLevel(logging.INFO)
+
+logger = logging.getLogger("pymentor")
+logger.setLevel(logging.INFO)
+logger.handlers.clear()
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
+logger.propagate = False
+
+# Ensure submodule loggers (ai_mentor, quota_manager) pipe directly into both handlers
+for subname in ["pymentor.ai", "pymentor.quota"]:
+    sub = logging.getLogger(subname)
+    sub.setLevel(logging.INFO)
+    sub.handlers.clear()
+    sub.propagate = True
+
+try:
+    from pymentor.backend.database import get_connection, init_db
+    from pymentor.backend.ai_mentor import evaluate_code, simulate_run, get_api_key, FALLBACK_MODELS
+except ImportError:
+    from backend.database import get_connection, init_db
+    from backend.ai_mentor import evaluate_code, simulate_run, get_api_key, FALLBACK_MODELS
 
 init_db()
 
-app = FastAPI(title="Python Practice API", version="2.0.0")
+# Turn off auto-docs in production to prevent automated scanner fingerprinting
+app = FastAPI(
+    title="Python Practice API",
+    version="2.0.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None
+)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 @app.middleware("http")
-async def add_coi_headers(request, call_next):
+async def audit_http_middleware(request: Request, call_next):
+    start_time = time.time()
+    client_ip = request.client.host if request.client else "unknown"
+    method = request.method
+    path = request.url.path
+
     response = await call_next(request)
+
     response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
     response.headers["Cross-Origin-Embedder-Policy"] = "credentialless"
+
+    duration_ms = round((time.time() - start_time) * 1000, 1)
+    status_code = response.status_code
+
+    # Log API accesses and root HTML page hits for auditing
+    if path.startswith("/api") or path in ["/", "/practice"]:
+        logger.info(f"[HTTP] {client_ip} - {method} {path} -> {status_code} ({duration_ms}ms)")
+
     return response
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
@@ -81,7 +140,15 @@ class SetKeyRequest(BaseModel):
 # ─────────────────────────────────────────────
 
 @app.get("/api/status")
-def get_status():
+def get_status(request: Request, x_admin_secret: Optional[str] = Header(None)):
+    admin_secret = os.environ.get("ADMIN_SECRET", "").strip()
+    if not admin_secret:
+        admin_secret = "pymentor-admin-secret"
+    if x_admin_secret != admin_secret:
+        client_ip = request.client.host if request.client else "unknown"
+        logger.warning(f"[SECURITY] Unauthorized access to /api/status blocked from IP={client_ip}")
+        raise HTTPException(status_code=403, detail="Access Denied")
+
     has_key = bool(get_api_key())
     masked_key = ""
     if has_key:
@@ -95,7 +162,15 @@ def get_status():
     }
 
 @app.post("/api/config/key")
-def set_api_key(req: SetKeyRequest):
+def set_api_key(req: SetKeyRequest, request: Request, x_admin_secret: Optional[str] = Header(None)):
+    admin_secret = os.environ.get("ADMIN_SECRET", "").strip()
+    if not admin_secret:
+        admin_secret = "pymentor-admin-secret"
+    if x_admin_secret != admin_secret:
+        client_ip = request.client.host if request.client else "unknown"
+        logger.warning(f"[SECURITY] Unauthorized attempt to update API key from IP={client_ip}")
+        raise HTTPException(status_code=403, detail="Forbidden: Valid X-Admin-Secret header required.")
+
     key = req.api_key.strip()
     if not key:
         raise HTTPException(status_code=400, detail="API key cannot be empty")
@@ -103,6 +178,7 @@ def set_api_key(req: SetKeyRequest):
     env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
     with open(env_path, "w", encoding="utf-8") as f:
         f.write(f"GEMINI_API_KEY={key}\n")
+    logger.info("[ADMIN] Gemini API Key updated successfully by admin")
     return {"message": "API Key saved successfully!", "has_api_key": True}
 
 @app.get("/api/topics")
@@ -160,15 +236,17 @@ def get_problem(problem_id: int):
     }
 
 @app.post("/api/student/login")
-def login_student(req: StudentLoginRequest):
+def login_student(req: StudentLoginRequest, request: Request):
     import re
+    client_ip = request.client.host if request.client else "unknown"
     raw_section = (req.section or "").strip().upper()
     raw_roll = (req.roll_no or "").strip()
     password = (req.password or "").strip()
 
-    logger.info(f"Student login attempt: section='{raw_section}', roll='{raw_roll}', pwd='{password}'")
+    logger.info(f"[AUTH] Login attempt from IP={client_ip}: section='{raw_section}', roll='{raw_roll}'")
 
     if not raw_section or not raw_roll or not password:
+        logger.warning(f"[AUTH] Login rejected: missing fields from IP={client_ip}")
         raise HTTPException(status_code=400, detail="Section, Roll Number, and Password are required.")
 
     # Normalize roll_no: strip 'User', 'Roll', 'E-', leading zeroes (e.g. '01' -> '1', 'User 1' -> '1')
@@ -191,17 +269,15 @@ def login_student(req: StudentLoginRequest):
     student = cursor.fetchone()
     conn.close()
 
-    if not student:
-        raise HTTPException(
-            status_code=403, 
-            detail="Access Denied"
-        )
-
-    if student["password"] != password:
+    # Prevent roll enumeration: uniform 401 response for non-existent roll or incorrect password
+    if not student or student["password"] != password:
+        logger.warning(f"[AUTH] Login FAILED from IP={client_ip}: section='{raw_section}', roll='{raw_roll}' (Invalid credentials)")
         raise HTTPException(
             status_code=401, 
-            detail="Access Denied"
+            detail="Access Denied: Invalid credentials"
         )
+
+    logger.info(f"[AUTH] Login SUCCESS: ID={student['id']}, Name='{student['name']}', Section={student['section']}, Roll={student['roll_no']} (IP={client_ip})")
 
     return {
         "student_id": student["id"],
@@ -228,11 +304,23 @@ def change_password(req: ChangePasswordRequest):
     cursor.execute("UPDATE students SET password = ? WHERE id = ?", (new_pwd, req.student_id))
     conn.commit()
     conn.close()
+    logger.info(f"[AUTH] Password updated successfully for Student ID={req.student_id}")
     return {"message": "Password updated successfully!"}
 
 @app.get("/api/quota")
-def check_quota_status():
-    from pymentor.backend.quota_manager import get_quota_summary
+def check_quota_status(request: Request, x_admin_secret: Optional[str] = Header(None)):
+    admin_secret = os.environ.get("ADMIN_SECRET", "").strip()
+    if not admin_secret:
+        admin_secret = "pymentor-admin-secret"
+    if x_admin_secret != admin_secret:
+        client_ip = request.client.host if request.client else "unknown"
+        logger.warning(f"[SECURITY] Unauthorized access to /api/quota blocked from IP={client_ip}")
+        raise HTTPException(status_code=403, detail="Access Denied")
+
+    try:
+        from pymentor.backend.quota_manager import get_quota_summary
+    except ImportError:
+        from backend.quota_manager import get_quota_summary
     return {"quotas": get_quota_summary()}
 
 @app.post("/api/session/start")
@@ -261,6 +349,8 @@ def start_session(req: SessionStartRequest):
         """, (req.student_id, req.problem_id, req.help_level))
         conn.commit()
         session_id = cursor.lastrowid
+
+    logger.info(f"[SESSION] Student ID={req.student_id} opened problem ID={req.problem_id} (session_id={session_id}, level={req.help_level})")
 
     cursor.execute("""
     SELECT attempt_number, code, ai_response, is_correct, created_at
@@ -341,7 +431,7 @@ def submit_code(req: SubmitCodeRequest):
 
     cursor.execute("""
     SELECT s.id, s.student_id, s.problem_id, s.help_level, s.status,
-           st.name as student_name, st.section as student_section
+           st.name as student_name, st.section as student_section, st.roll_no as student_roll
     FROM sessions s
     JOIN students st ON s.student_id = st.id
     WHERE s.id = ?
@@ -370,6 +460,7 @@ def submit_code(req: SubmitCodeRequest):
     history = [dict(r) for r in cursor.fetchall()]
     attempt_number = len(history) + 1
 
+    eval_start = time.time()
     eval_result = evaluate_code(
         student_name=session["student_name"],
         section=session["student_section"],
@@ -379,6 +470,7 @@ def submit_code(req: SubmitCodeRequest):
         history=history,
         simulated_output=req.simulated_output
     )
+    eval_duration_ms = round((time.time() - eval_start) * 1000, 1)
 
     is_correct = 1 if eval_result["is_correct"] else 0
     feedback = eval_result["feedback"]
@@ -396,6 +488,9 @@ def submit_code(req: SubmitCodeRequest):
 
     conn.commit()
     conn.close()
+
+    result_label = "SOLVED" if is_correct else "IN_PROGRESS"
+    logger.info(f"[EVAL] Submit Attempt #{attempt_number}: Student='{session['student_name']}' (Sec {session['student_section']}, Roll {session['student_roll']}) Problem='{problem['title']}' -> Result={result_label} Model='{model_used}' ({eval_duration_ms}ms)")
 
     return {
         "is_correct": bool(is_correct),
