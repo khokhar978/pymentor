@@ -5,10 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Python Practice | khokhar.in.net</title>
     <meta name="description" content="Practice Python programming problems topic-wise with step-by-step guidance.">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="alternate icon" href="/favicon.ico">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/style.css?v=2.5">
 </head>
 <body>
     <header class="site-header">
@@ -28,9 +30,18 @@
 
     <div class="problems-page">
         <div class="page-hero">
-            <h1>Practice Problems</h1>
-            <p>Choose a topic and problem below to start coding. Get step-by-step guidance as you practice.</p>
+            <div class="hero-left">
+                <h1>Practice Problems</h1>
+                <p>Select a topic to expand questions. Track your progress with step-by-step guidance.</p>
+            </div>
+            <div class="hero-actions">
+                <button id="toggleAllBtn" class="btn-toggle-all" type="button" title="Expand or collapse all topics">
+                    <span id="toggleAllIcon">▾</span>
+                    <span id="toggleAllText">Expand All</span>
+                </button>
+            </div>
         </div>
+
         <div id="topicsContainer">
             <p style="color: var(--text-faint); font-size: 13px;">Loading problems...</p>
         </div>
@@ -40,8 +51,6 @@
         Python Practice Lab &mdash; <a href="https://khokhar.in.net" target="_blank">khokhar.in.net</a>
     </footer>
 
-
-
-    <script src="/js/problems.js"></script>
+    <script src="/js/problems.js?v=2.5"></script>
 </body>
 </html>

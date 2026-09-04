@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PyMentor | Admin Operations & Telemetry</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="alternate icon" href="/favicon.ico">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        body { background: #0b0f19; color: #f8fafc; font-family: 'Inter', sans-serif; overflow-x: hidden; }
+        .admin-layout { max-width: 1320px; margin: 0 auto; padding: 2rem; }
+        
+        .admin-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
+        .admin-header h1 { font-size: 1.75rem; font-weight: 800; color: #38bdf8; display: flex; align-items: center; gap: 0.6rem; letter-spacing: -0.5px; }
+        
+        .admin-login-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(11, 15, 25, 0.96); backdrop-filter: blur(12px);
+            display: flex; justify-content: center; align-items: center; z-index: 1000;
+        }
+        .admin-login-box {
+            background: rgba(30, 41, 59, 0.9); border: 1px solid rgba(255,255,255,0.12);
+            padding: 2.5rem; border-radius: 16px; text-align: center; width: 420px; box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+        }
+        .admin-login-box h2 { color: #fff; margin-bottom: 1.5rem; font-size: 1.5rem; }
+        .admin-login-box input {
+            width: 100%; padding: 0.85rem; margin-bottom: 1rem; border-radius: 8px;
+            background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(255,255,255,0.2);
+            color: #fff; text-align: center; font-size: 1.1rem; outline: none;
+        }
+        .admin-login-box input:focus { border-color: #38bdf8; }
+
+        /* API Key Banner */
+        .api-banner {
+            background: linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.9));
+            border: 1px solid rgba(56, 189, 248, 0.25);
+            padding: 1.25rem 1.5rem; border-radius: 14px;
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        .api-info { display: flex; align-items: center; gap: 1rem; }
+        .api-status-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+        .dot-green { background: #10b981; box-shadow: 0 0 10px #10b981; }
+        .dot-red { background: #ef4444; box-shadow: 0 0 10px #ef4444; }
+        .api-title { font-weight: 700; color: #f1f5f9; font-size: 1rem; }
+        .api-sub { font-size: 0.85rem; color: #94a3b8; font-family: 'Fira Code', monospace; margin-top: 0.2rem; }
+        .api-actions { display: flex; gap: 0.75rem; align-items: center; }
+
+        .btn-action {
+            background: #0284c7; color: white; border: none; padding: 0.55rem 1.1rem;
+            border-radius: 8px; font-weight: 600; font-size: 0.875rem; cursor: pointer;
+            transition: all 0.2s ease; display: inline-flex; align-items: center; gap: 0.4rem;
+        }
+        .btn-action:hover { background: #0369a1; transform: translateY(-1px); }
+        .btn-secondary { background: rgba(51, 65, 85, 0.8); color: #cbd5e1; border: 1px solid rgba(255,255,255,0.1); }
+        .btn-secondary:hover { background: rgba(71, 85, 105, 0.9); color: white; }
+
+        /* API Key Inline Dropdown / Modal */
+        .api-key-panel {
+            background: rgba(15, 23, 42, 0.95); border: 1px solid rgba(56, 189, 248, 0.3);
+            border-radius: 12px; padding: 1.25rem; margin-top: 1rem; width: 100%;
+        }
+        .api-key-panel input {
+            width: 100%; padding: 0.75rem 1rem; border-radius: 8px;
+            background: rgba(30, 41, 59, 0.9); border: 1px solid rgba(255,255,255,0.2);
+            color: #f8fafc; font-family: 'Fira Code', monospace; font-size: 0.9rem; margin-bottom: 0.75rem; outline: none;
+        }
+        .api-key-panel input:focus { border-color: #38bdf8; }
+
+        /* Metrics Grid */
+        .section-header {
+            font-size: 0.85rem; color: #94a3b8; text-transform: uppercase;
+            letter-spacing: 1.2px; font-weight: 700; margin-bottom: 1rem; margin-top: 2rem;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.25rem; margin-bottom: 2rem; }
+        .metric-card {
+            background: rgba(30, 41, 59, 0.45); border: 1px solid rgba(255,255,255,0.06);
+            padding: 1.25rem; border-radius: 14px; display: flex; flex-direction: column;
+            position: relative; overflow: hidden; backdrop-filter: blur(8px);
+        }
+        .metric-card::before {
+            content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 3px;
+            background: linear-gradient(90deg, #38bdf8, #818cf8); opacity: 0.5;
+        }
+        .metric-title { font-size: 0.8rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-bottom: 0.4rem; }
+        .metric-value { font-size: 1.85rem; font-weight: 800; color: #f8fafc; }
+
+        /* Panels & Grids */
+        .row-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 2rem; }
+        @media (max-width: 900px) { .row-grid { grid-template-columns: 1fr; } }
+        
+        .panel {
+            background: rgba(30, 41, 59, 0.45); border: 1px solid rgba(255,255,255,0.06);
+            padding: 1.5rem; border-radius: 14px; margin-bottom: 2rem; backdrop-filter: blur(8px);
+        }
+        .panel h3 { font-size: 1.1rem; margin-bottom: 1.25rem; color: #e2e8f0; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 0.6rem; display: flex; justify-content: space-between; align-items: center; }
+
+        /* Progress bars */
+        .bar-item { margin-bottom: 1rem; }
+        .bar-label { display: flex; justify-content: space-between; font-size: 0.88rem; margin-bottom: 0.35rem; color: #cbd5e1; }
+        .bar-bg { width: 100%; height: 8px; background: rgba(0,0,0,0.35); border-radius: 4px; overflow: hidden; }
+        .bar-fill { height: 100%; background: #3b82f6; transition: width 0.5s ease-out; }
+        .bar-fill.sys { background: #10b981; }
+
+        /* Activity Feed */
+        .activity-feed { max-height: 380px; overflow-y: auto; padding-right: 0.5rem; }
+        .feed-item {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0.75rem 0; border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .feed-item:last-child { border-bottom: none; }
+        .feed-main { display: flex; flex-direction: column; }
+        .feed-name { font-weight: 600; color: #e2e8f0; font-size: 0.95rem; }
+        .feed-meta { font-size: 0.8rem; color: #94a3b8; margin-top: 0.2rem; }
+        .feed-badge {
+            padding: 0.25rem 0.6rem; border-radius: 6px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+        }
+        .badge-success { background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); }
+        .badge-fail { background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); }
+
+        /* Data Tables (Quotas & Roster) */
+        .data-table-wrapper { overflow-x: auto; border-radius: 8px; }
+        .data-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem; }
+        .data-table th {
+            background: rgba(15, 23, 42, 0.6); color: #94a3b8; font-size: 0.78rem;
+            text-transform: uppercase; letter-spacing: 0.8px; padding: 0.85rem 1rem; border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        .data-table td { padding: 0.9rem 1rem; border-bottom: 1px solid rgba(255,255,255,0.04); color: #e2e8f0; }
+        .data-table tr:hover td { background: rgba(255,255,255,0.02); }
+        
+        .pill {
+            display: inline-block; padding: 0.25rem 0.55rem; border-radius: 6px;
+            font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+        }
+        .pill-ready { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+        .pill-cooling { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+        .pill-blocked { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+        .pill-tier { background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.25); font-weight: 600; }
+
+        .table-search {
+            display: flex; gap: 1rem; margin-bottom: 1.2rem; flex-wrap: wrap; align-items: center;
+        }
+        .table-search input {
+            padding: 0.55rem 1rem; border-radius: 8px; background: rgba(15, 23, 42, 0.7);
+            border: 1px solid rgba(255,255,255,0.15); color: #fff; font-size: 0.88rem; outline: none; width: 260px;
+        }
+        .table-search select {
+            padding: 0.55rem 1rem; border-radius: 8px; background: rgba(15, 23, 42, 0.7);
+            border: 1px solid rgba(255,255,255,0.15); color: #fff; font-size: 0.88rem; outline: none;
+        }
+
+        /* Student Detail Modal */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(11, 15, 25, 0.88); backdrop-filter: blur(8px);
+            display: flex; justify-content: center; align-items: center; z-index: 1050;
+        }
+        .modal-card {
+            background: #131d31; border: 1px solid rgba(56, 189, 248, 0.2);
+            border-radius: 16px; padding: 2rem; width: 90%; max-width: 900px;
+            max-height: 88vh; overflow-y: auto; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.7);
+        }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 1rem; }
+        .modal-close { background: none; border: none; color: #94a3b8; font-size: 1.5rem; cursor: pointer; }
+        .modal-close:hover { color: #fff; }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(0,0,0,0.1); }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
+        
+        .refresh-btn { background: #3b82f6; color: white; padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; border: none; font-size: 0.9rem; transition: background 0.2s; font-weight: 600; }
+        .refresh-btn:hover { background: #2563eb; }
+        .logout-btn { background: transparent; border: 1px solid #ef4444; color: #ef4444; padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; transition: all 0.2s; margin-left: 0.5rem; font-weight: 600; }
+        .logout-btn:hover { background: rgba(239, 68, 68, 0.1); }
+        
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+    <!-- Login Overlay -->
+    <div id="adminLoginOverlay" class="admin-login-overlay">
+        <div class="admin-login-box">
+            <h2>Admin Authentication</h2>
+            <p style="color: #94a3b8; font-size: 0.9rem; margin-bottom: 1.5rem;">Enter the master secret to unlock the PyMentor telemetry & control operations.</p>
+            <form id="adminLoginForm">
+                <input type="password" id="adminSecretInput" placeholder="Enter Admin Secret" required>
+                <button type="submit" class="btn" style="width: 100%;">Unlock Dashboard</button>
+                <p id="loginError" style="color: #ef4444; margin-top: 1rem; font-size: 0.9rem; display: none;">Invalid secret key.</p>
+            </form>
+        </div>
+    </div>
+
+    <div class="admin-layout hidden" id="dashboardContent">
+        <header class="admin-header">
+            <div>
+                <h1><svg width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg> PyMentor Operations</h1>
+                <p style="color: #94a3b8; font-size: 0.85rem; margin-top: 0.25rem;">Server Telemetry, Model Quotas & Student Learning Analytics</p>
+            </div>
+            <div>
+                <span id="lastUpdated" style="color:#94a3b8; font-size: 0.85rem; margin-right: 1rem;"></span>
+                <button id="refreshBtn" class="refresh-btn">Refresh Now</button>
+                <button id="logoutBtn" class="logout-btn">Lock</button>
+            </div>
+        </header>
+
+        <!-- API Key Management Banner -->
+        <div class="api-banner">
+            <div class="api-info">
+                <span id="apiStatusDot" class="api-status-dot dot-red"></span>
+                <div>
+                    <div class="api-title" id="apiStatusTitle">Gemini API Key: Checking...</div>
+                    <div class="api-sub" id="apiStatusSub">Loading configuration...</div>
+                </div>
+            </div>
+            <div class="api-actions">
+                <button id="toggleKeyFormBtn" class="btn-action">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 7h1a2 2 0 0 1 2 2m4 0a6 6 0 0 1-7.743 5.743L11 17H9v2H7v2H4a1 1 0 0 1-1-1v-2.586a1 1 0 0 1 .293-.707l5.964-5.964A6 6 0 1 1 21 9z"/></svg>
+                    Change API Key
+                </button>
+            </div>
+
+            <!-- Expandable Key Form -->
+            <div id="apiKeyFormPanel" class="api-key-panel hidden">
+                <div style="font-size: 0.9rem; font-weight: 600; color: #f1f5f9; margin-bottom: 0.5rem;">Update Google Gemini API Key</div>
+                <div style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 0.75rem;">Changes take effect immediately without needing to restart the server. Saved permanently to <span style="color:#38bdf8;">.env</span>.</div>
+                <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+                    <input type="password" id="newApiKeyInput" placeholder="Paste your Gemini API key (e.g. AIzaSy... or AQ.Ab8...)" style="flex: 1; min-width: 300px; margin-bottom: 0;">
+                    <button id="saveApiKeyBtn" class="btn-action" style="background: #10b981;">Save & Verify Key</button>
+                    <button id="cancelKeyBtn" class="btn-action btn-secondary">Cancel</button>
+                </div>
+                <p id="apiKeyFeedback" style="font-size: 0.85rem; margin-top: 0.5rem; display: none;"></p>
+            </div>
+        </div>
+
+        <!-- Platform Metrics -->
+        <div class="section-header">
+            <span>Platform Activity & Engagement</span>
+        </div>
+        <div class="metric-grid">
+            <div class="metric-card">
+                <div class="metric-title">Enrolled Students</div>
+                <div class="metric-value" id="valStudents">0</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-title">Code Runs Clicked</div>
+                <div class="metric-value" id="valRuns" style="color: #38bdf8;">0</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-title">AI Guidance Requests</div>
+                <div class="metric-value" id="valSubmissions" style="color: #a78bfa;">0</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-title">Solved Problems</div>
+                <div class="metric-value" id="valSolved" style="color: #10b981;">0</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-title">Success Rate</div>
+                <div class="metric-value" id="valRate">0%</div>
+            </div>
+        </div>
+
+        <!-- System Metrics -->
+        <div class="section-header">
+            <span>Server Health & Hardware Metrics</span>
+        </div>
+        <div class="metric-grid" id="sysMetricGrid">
+            <div class="metric-card">
+                <div class="metric-title">Requests (Last Min)</div>
+                <div class="metric-value" id="sysRpm">0</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-title">CPU Load</div>
+                <div class="metric-value" id="sysCpu">0%</div>
+                <div class="bar-bg" style="margin-top:0.5rem;"><div class="bar-fill sys" id="barCpu" style="width:0%;"></div></div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-title">Memory Usage</div>
+                <div class="metric-value" id="sysMem">0%</div>
+                <div class="bar-bg" style="margin-top:0.5rem;"><div class="bar-fill sys" id="barMem" style="width:0%;"></div></div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-title">Disk Usage</div>
+                <div class="metric-value" id="sysDisk">0%</div>
+                <div class="bar-bg" style="margin-top:0.5rem;"><div class="bar-fill sys" id="barDisk" style="width:0%;"></div></div>
+            </div>
+        </div>
+
+        <!-- AI Model Quotas & Multi-Model Engine -->
+        <div class="panel">
+            <h3>
+                <span>Multi-Model Quotas & Capacity Engine</span>
+                <span style="font-size: 0.8rem; font-weight: 500; color: #94a3b8;">Daily Pacific Time Boundary</span>
+            </h3>
+            <div class="data-table-wrapper">
+                <table class="data-table" id="quotasTable">
+                    <thead>
+                        <tr>
+                            <th>Model Name</th>
+                            <th>Tier & Priority</th>
+                            <th>Daily Usage (RPD)</th>
+                            <th>RPM Active</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="quotasTableBody">
+                        <!-- Populated via JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Student Roster & Granular Telemetry -->
+        <div class="panel">
+            <h3>
+                <span>Student Telemetry & Progress Roster</span>
+                <span style="font-size: 0.8rem; font-weight: 500; color: #94a3b8;" id="rosterCount">0 Students</span>
+            </h3>
+            <div class="table-search">
+                <input type="text" id="rosterSearch" placeholder="Search by student name or roll no...">
+                <select id="rosterSectionFilter">
+                    <option value="">All Sections</option>
+                    <option value="E">Section E</option>
+                    <option value="F">Section F</option>
+                    <option value="G">Section G</option>
+                </select>
+            </div>
+            <div class="data-table-wrapper">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Student</th>
+                            <th>Section</th>
+                            <th>Roll No</th>
+                            <th>Attempted</th>
+                            <th>Solved</th>
+                            <th>Run Clicks</th>
+                            <th>Guidance Used</th>
+                            <th>Active Time</th>
+                            <th>Last Active</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rosterTableBody">
+                        <!-- Populated via JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="row-grid">
+            <!-- Toughest Problems -->
+            <div class="panel" style="margin-bottom: 0;">
+                <h3>Toughest Problems (Most Attempts)</h3>
+                <div id="toughestProblemsList">
+                    <!-- Populated via JS -->
+                </div>
+            </div>
+
+            <!-- Guidance Usage -->
+            <div class="panel" style="margin-bottom: 0;">
+                <h3>AI Guidance Dependency</h3>
+                <div id="guidanceUsageList">
+                    <!-- Populated via JS -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Live Activity Feed -->
+        <div class="panel" style="margin-top: 2rem;">
+            <h3>Live Activity Feed</h3>
+            <div class="activity-feed" id="liveFeed">
+                <!-- Populated via JS -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Student Detail Modal -->
+    <div id="studentModal" class="modal-overlay hidden">
+        <div class="modal-card">
+            <div class="modal-header">
+                <div>
+                    <h2 id="modalStudentName" style="color: #38bdf8; font-size: 1.4rem; font-weight: 700;">Student Telemetry</h2>
+                    <p id="modalStudentMeta" style="color: #94a3b8; font-size: 0.88rem; margin-top: 0.2rem;"></p>
+                </div>
+                <button class="modal-close" id="modalCloseBtn">&times;</button>
+            </div>
+
+            <h4 style="color: #cbd5e1; font-size: 0.95rem; margin-bottom: 0.8rem; text-transform: uppercase; letter-spacing: 0.8px;">Per-Question Breakdown</h4>
+            <div class="data-table-wrapper" style="margin-bottom: 2rem;">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Problem</th>
+                            <th>Topic</th>
+                            <th>Status</th>
+                            <th>Run Clicks</th>
+                            <th>Guidance Requests</th>
+                            <th>Active Time</th>
+                            <th>Last Model Used</th>
+                            <th>Last Activity</th>
+                        </tr>
+                    </thead>
+                    <tbody id="modalProblemsBody">
+                        <!-- Populated via JS -->
+                    </tbody>
+                </table>
+            </div>
+
+            <h4 style="color: #cbd5e1; font-size: 0.95rem; margin-bottom: 0.8rem; text-transform: uppercase; letter-spacing: 0.8px;">Recent Clickstream Events</h4>
+            <div class="data-table-wrapper">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Event Type</th>
+                            <th>Metadata / Context</th>
+                            <th>Timestamp</th>
+                        </tr>
+                    </thead>
+                    <tbody id="modalEventsBody">
+                        <!-- Populated via JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/admin.js"></script>
+</body>
+</html>

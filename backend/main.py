@@ -8,6 +8,8 @@ import json
 import logging
 import secrets
 import time
+import psutil
+from collections import deque
 from datetime import datetime, timedelta
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException, Depends, Request
@@ -16,8 +18,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 
-from pymentor.backend.database import get_connection, init_db, verify_password, hash_password
+from pymentor.backend.database import get_connection, init_db, verify_password, hash_password, log_event
 from pymentor.backend.ai_mentor import evaluate_code, simulate_run, FALLBACK_MODELS, get_api_key
+from pymentor.backend.quota_manager import get_quota_summary
 
 init_db()
 
@@ -29,6 +32,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Global request tracker
+request_times = deque(maxlen=5000)
+
+@app.middleware("http")
+async def track_requests(request: Request, call_next):
+    request_times.append(time.time())
+    response = await call_next(request)
+    return response
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
 
@@ -100,6 +112,7 @@ class SessionStartRequest(BaseModel):
 class SessionSaveRequest(BaseModel):
     session_id: int
     code: str
+    time_spent_seconds: Optional[int] = None
 
 class RunCodeRequest(BaseModel):
     session_id: int
@@ -113,6 +126,15 @@ class SubmitCodeRequest(BaseModel):
 
 class SetKeyRequest(BaseModel):
     api_key: str
+
+class HeartbeatRequest(BaseModel):
+    session_id: int
+
+class TelemetryEventRequest(BaseModel):
+    session_id: Optional[int] = None
+    problem_id: Optional[int] = None
+    event_type: str
+    event_data: Optional[dict] = None
 
 
 # ─────────────────────────────────────────────
@@ -139,10 +161,36 @@ def set_api_key(req: SetKeyRequest, admin: bool = Depends(verify_admin)):
     if not key:
         raise HTTPException(status_code=400, detail="API key cannot be empty")
     os.environ["GEMINI_API_KEY"] = key
+    os.environ["GOOGLE_API_KEY"] = key
     env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
+    
+    # Safely update .env file without destroying other variables
+    env_lines = []
+    if os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8") as f:
+            env_lines = f.readlines()
+            
+    key_found = False
+    for i, line in enumerate(env_lines):
+        if line.startswith("GEMINI_API_KEY="):
+            env_lines[i] = f"GEMINI_API_KEY={key}\n"
+            key_found = True
+            break
+            
+    if not key_found:
+        if env_lines and not env_lines[-1].endswith("\n"):
+            env_lines.append("\n")
+        env_lines.append(f"GEMINI_API_KEY={key}\n")
+        
     with open(env_path, "w", encoding="utf-8") as f:
-        f.write(f"GEMINI_API_KEY={key}\n")
-    return {"message": "API Key saved successfully!", "has_api_key": True}
+        f.writelines(env_lines)
+        
+    masked_key = (key[:4] + "..." + key[-4:]) if len(key) > 8 else "***"
+    return {
+        "message": "API Key saved successfully!",
+        "has_api_key": True,
+        "masked_key": masked_key
+    }
 
 @app.get("/api/topics")
 def get_topics():
@@ -170,6 +218,58 @@ def get_topics():
 
     result = [{"topic": k, "problems": v} for k, v in topics_dict.items()]
     return {"topics": result}
+
+@app.get("/api/student/progress")
+def get_student_progress(student_id: int = Depends(get_current_student)):
+    """
+    Returns per-problem progress status and time spent for the logged-in student.
+    Each problem is classified as:
+      - 'solved'      : at least one submission with is_correct=1
+      - 'attempted'   : has sessions/submissions but no correct submission
+      - 'not_started' : no sessions at all
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT 
+        p_sessions.problem_id,
+        p_sessions.time_spent_seconds,
+        COALESCE(sub_agg.has_correct, 0) as has_correct,
+        COALESCE(sub_agg.submission_count, 0) as submission_count
+    FROM (
+        SELECT problem_id, SUM(COALESCE(time_spent_seconds, 0)) as time_spent_seconds
+        FROM sessions
+        WHERE student_id = ?
+        GROUP BY problem_id
+    ) p_sessions
+    LEFT JOIN (
+        SELECT s.problem_id, MAX(sub.is_correct) as has_correct, COUNT(sub.id) as submission_count
+        FROM sessions s
+        JOIN submissions sub ON sub.session_id = s.id
+        WHERE s.student_id = ?
+        GROUP BY s.problem_id
+    ) sub_agg ON p_sessions.problem_id = sub_agg.problem_id
+    """, (student_id, student_id))
+    rows = cursor.fetchall()
+    conn.close()
+
+    progress = {}
+    for r in rows:
+        pid = r["problem_id"]
+        time_spent = r["time_spent_seconds"] or 0
+        if r["has_correct"] == 1:
+            status = "solved"
+        elif r["submission_count"] > 0 or time_spent > 0:
+            status = "attempted"
+        else:
+            status = "not_started"
+
+        progress[pid] = {
+            "status": status,
+            "time_spent_seconds": time_spent
+        }
+
+    return {"progress": progress}
 
 @app.get("/api/problems/{problem_id}")
 def get_problem(problem_id: int):
@@ -241,6 +341,8 @@ def login_student(req: LoginRequest):
     needs_password_change = verify_password("123", student["password"])
     conn.close()
 
+    log_event(student_id=student["id"], event_type="login", event_data={"section": section, "roll_no": roll_no})
+
     return {
         "student_id": student["id"],
         "name": student["name"],
@@ -258,6 +360,11 @@ def logout(request: Request):
         if len(parts) == 2:
             token = parts[1]
             conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT student_id FROM auth_tokens WHERE token = ?", (token,))
+            row = cursor.fetchone()
+            if row:
+                log_event(student_id=row["student_id"], event_type="logout")
             conn.execute("DELETE FROM auth_tokens WHERE token = ?", (token,))
             conn.commit()
             conn.close()
@@ -299,13 +406,13 @@ def start_session(req: SessionStartRequest, student_id: int = Depends(get_curren
     if session:
         session_id = session["id"]
         cursor.execute("""
-        UPDATE sessions SET help_level = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+        UPDATE sessions SET help_level = ?, last_heartbeat_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?
         """, (req.help_level, session_id))
         conn.commit()
     else:
         cursor.execute("""
-        INSERT INTO sessions (student_id, problem_id, help_level)
-        VALUES (?, ?, ?)
+        INSERT INTO sessions (student_id, problem_id, help_level, last_heartbeat_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
         """, (student_id, req.problem_id, req.help_level))
         conn.commit()
         session_id = cursor.lastrowid
@@ -318,10 +425,21 @@ def start_session(req: SessionStartRequest, student_id: int = Depends(get_curren
     """, (session_id,))
     submissions = [dict(r) for r in cursor.fetchall()]
     
-    # Retrieve last_code from session
-    cursor.execute("SELECT last_code FROM sessions WHERE id = ?", (session_id,))
-    last_code = cursor.fetchone()["last_code"]
+    # Retrieve last_code and time_spent_seconds from session
+    cursor.execute("SELECT last_code, time_spent_seconds FROM sessions WHERE id = ?", (session_id,))
+    s_row = cursor.fetchone()
+    last_code = s_row["last_code"] if s_row else ""
+    time_spent_seconds = (s_row["time_spent_seconds"] or 0) if s_row else 0
     conn.close()
+
+    # Log session start/resume event
+    log_event(
+        student_id=student_id,
+        session_id=session_id,
+        problem_id=req.problem_id,
+        event_type="session_start",
+        event_data={"help_level": req.help_level}
+    )
 
     is_solved = any(s["is_correct"] == 1 for s in submissions)
 
@@ -331,6 +449,7 @@ def start_session(req: SessionStartRequest, student_id: int = Depends(get_curren
         "attempts_count": len(submissions),
         "is_solved": is_solved,
         "last_code": last_code,
+        "time_spent_seconds": time_spent_seconds,
         "history_count": len(submissions)
     }
 
@@ -343,10 +462,91 @@ def save_session(req: SessionSaveRequest, student_id: int = Depends(get_current_
         conn.close()
         raise HTTPException(status_code=404, detail="Session not found")
         
-    cursor.execute("UPDATE sessions SET last_code = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (req.code, req.session_id))
+    if req.time_spent_seconds is not None:
+        cursor.execute("""
+        UPDATE sessions 
+        SET last_code = ?, time_spent_seconds = COALESCE(time_spent_seconds, 0) + ?, updated_at = CURRENT_TIMESTAMP 
+        WHERE id = ?
+        """, (req.code, req.time_spent_seconds, req.session_id))
+    else:
+        cursor.execute("UPDATE sessions SET last_code = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (req.code, req.session_id))
     conn.commit()
     conn.close()
     return {"message": "Saved"}
+
+@app.post("/api/session/heartbeat")
+def session_heartbeat(req: HeartbeatRequest, student_id: int = Depends(get_current_student)):
+    """
+    Server-authoritative heartbeat.
+    Calculates elapsed time strictly using the server's clock.
+    Client cannot forge or manipulate time_spent_seconds.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT id, last_heartbeat_at, time_spent_seconds 
+    FROM sessions 
+    WHERE id = ? AND student_id = ?
+    """, (req.session_id, student_id))
+    session = cursor.fetchone()
+    if not session:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    now = datetime.utcnow()
+    now_str = now.strftime('%Y-%m-%d %H:%M:%S')
+    last_hb_str = session["last_heartbeat_at"]
+    credited_seconds = 0
+
+    if last_hb_str:
+        try:
+            last_hb_cleaned = last_hb_str.replace("T", " ").split(".")[0]
+            last_hb = datetime.strptime(last_hb_cleaned, "%Y-%m-%d %H:%M:%S")
+            delta_seconds = int((now - last_hb).total_seconds())
+
+            # Reject heartbeats arriving too fast (< 10s) to stop script spam and avoid unnecessary DB writes
+            if delta_seconds < 10:
+                conn.close()
+                return {
+                    "status": "ignored",
+                    "credited_seconds": 0,
+                    "total_time_spent": session["time_spent_seconds"] or 0
+                }
+
+            # Valid heartbeat window (10s to 45s): credit actual elapsed time, capped at 25s
+            if 10 <= delta_seconds <= 45:
+                credited_seconds = min(delta_seconds, 25)
+        except Exception:
+            credited_seconds = 0
+
+    if credited_seconds > 0:
+        cursor.execute("""
+        UPDATE sessions 
+        SET time_spent_seconds = COALESCE(time_spent_seconds, 0) + ?,
+            last_heartbeat_at = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """, (credited_seconds, now_str, req.session_id))
+    else:
+        # First heartbeat or after long idle gap (>45s): re-anchor server clock without crediting idle time
+        cursor.execute("""
+        UPDATE sessions 
+        SET last_heartbeat_at = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """, (now_str, req.session_id))
+
+    conn.commit()
+
+    cursor.execute("SELECT time_spent_seconds FROM sessions WHERE id = ?", (req.session_id,))
+    total = cursor.fetchone()["time_spent_seconds"] or 0
+    conn.close()
+
+    return {
+        "status": "ok",
+        "credited_seconds": credited_seconds,
+        "total_time_spent": total
+    }
 
 @app.post("/api/session/run")
 def run_code_simulated(req: RunCodeRequest, student_id: int = Depends(get_current_student)):
@@ -363,14 +563,33 @@ def run_code_simulated(req: RunCodeRequest, student_id: int = Depends(get_curren
         conn.close()
         raise HTTPException(status_code=404, detail="Session not found")
 
+    problem_id = session["problem_id"]
     cursor.execute("""
     SELECT title, topic, difficulty, description, sample_input, sample_output, ai_rubric
     FROM problems WHERE id = ?
-    """, (session["problem_id"],))
+    """, (problem_id,))
     problem = dict(cursor.fetchone())
+
+    # Increment run_count for this session
+    cursor.execute("UPDATE sessions SET run_count = COALESCE(run_count, 0) + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (req.session_id,))
+    conn.commit()
     conn.close()
 
     result = simulate_run(code=code, problem=problem)
+
+    # Log telemetry event for code run
+    log_event(
+        student_id=student_id,
+        session_id=req.session_id,
+        problem_id=problem_id,
+        event_type="run",
+        event_data={
+            "code_len": len(code),
+            "has_error": result.get("has_error", False),
+            "model_used": result.get("model_used", "")
+        }
+    )
+
     return result
 
 @app.post("/api/session/submit")
@@ -430,17 +649,37 @@ def submit_code(req: SubmitCodeRequest, student_id: int = Depends(get_current_st
     model_used = eval_result.get("model_used", "")
 
     cursor.execute("""
-    INSERT INTO submissions (session_id, code, ai_response, is_correct, attempt_number, model_used)
-    VALUES (?, ?, ?, ?, ?, ?)
-    """, (req.session_id, code, feedback, is_correct, attempt_number, model_used))
+    INSERT INTO submissions (session_id, code, ai_response, is_correct, attempt_number, model_used, simulated_output)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (req.session_id, code, feedback, is_correct, attempt_number, model_used, req.simulated_output or ""))
 
     if is_correct:
         cursor.execute("UPDATE sessions SET status = 'solved', last_code = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (code, req.session_id,))
     else:
         cursor.execute("UPDATE sessions SET last_code = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (code, req.session_id,))
 
-    conn.commit()
+    # Get updated total time spent
+    cursor.execute("SELECT time_spent_seconds FROM sessions WHERE id = ?", (req.session_id,))
+    s_row = cursor.fetchone()
+    total_time_spent = (s_row["time_spent_seconds"] or 0) if s_row else 0
     conn.close()
+
+    # Log telemetry event for guidance submission
+    log_event(
+        student_id=student_id,
+        session_id=req.session_id,
+        problem_id=problem_id,
+        event_type="guidance",
+        event_data={
+            "attempt_number": attempt_number,
+            "is_correct": bool(is_correct),
+            "help_level": help_level,
+            "model_used": model_used,
+            "eval_duration_ms": eval_duration_ms,
+            "code_len": len(code),
+            "time_spent_seconds": total_time_spent
+        }
+    )
 
     result_label = "SOLVED" if is_correct else "IN_PROGRESS"
     logger.info(f"[EVAL] Submit Attempt #{attempt_number}: Student='{session['student_name']}' (Sec {session['student_section']}, Roll {session['student_roll']}) Problem='{problem['title']}' -> Result={result_label} Model='{model_used}' ({eval_duration_ms}ms)")
@@ -450,8 +689,20 @@ def submit_code(req: SubmitCodeRequest, student_id: int = Depends(get_current_st
         "feedback": feedback,
         "attempt_number": attempt_number,
         "model_used": model_used,
+        "time_spent_seconds": total_time_spent,
         "error": eval_result.get("error")
     }
+
+@app.post("/api/telemetry/event")
+def record_telemetry(req: TelemetryEventRequest, student_id: int = Depends(get_current_student)):
+    log_event(
+        student_id=student_id,
+        session_id=req.session_id,
+        problem_id=req.problem_id,
+        event_type=req.event_type,
+        event_data=req.event_data
+    )
+    return {"status": "ok"}
 
 @app.get("/api/student/profile")
 def get_profile(student_id: int = Depends(get_current_student)):
@@ -521,6 +772,162 @@ def get_profile(student_id: int = Depends(get_current_student)):
         "activity_history": activity_history
     }
 
+@app.get("/api/admin/dashboard")
+def get_admin_dashboard(admin: bool = Depends(verify_admin)):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Students metrics
+    cursor.execute("SELECT COUNT(*) as c FROM students")
+    total_students = cursor.fetchone()["c"]
+
+    # Submission metrics
+    cursor.execute("SELECT COUNT(*) as c FROM submissions")
+    total_submissions = cursor.fetchone()["c"]
+    
+    cursor.execute("SELECT COUNT(*) as c FROM submissions WHERE is_correct = 1")
+    total_solved = cursor.fetchone()["c"]
+
+    # Total runs across all sessions
+    cursor.execute("SELECT COALESCE(SUM(run_count), 0) as total_runs FROM sessions")
+    total_runs = cursor.fetchone()["total_runs"]
+
+    # Problem Analytics
+    cursor.execute("""
+        SELECT p.title, COUNT(s.id) as attempts, SUM(s.is_correct) as correct
+        FROM submissions s
+        JOIN sessions ses ON s.session_id = ses.id
+        JOIN problems p ON ses.problem_id = p.id
+        GROUP BY p.id
+        ORDER BY attempts DESC LIMIT 5
+    """)
+    toughest_problems = [dict(row) for row in cursor.fetchall()]
+
+    # Guidance Usage
+    cursor.execute("""
+        SELECT help_level, COUNT(*) as c 
+        FROM sessions 
+        GROUP BY help_level
+        ORDER BY help_level ASC
+    """)
+    guidance_usage = [dict(row) for row in cursor.fetchall()]
+
+    # Live Feed (Recent submissions)
+    cursor.execute("""
+        SELECT st.name, p.title, sub.is_correct, sub.created_at, ses.help_level, sub.model_used
+        FROM submissions sub
+        JOIN sessions ses ON sub.session_id = ses.id
+        JOIN students st ON ses.student_id = st.id
+        JOIN problems p ON ses.problem_id = p.id
+        ORDER BY sub.id DESC LIMIT 15
+    """)
+    recent_activity = [dict(row) for row in cursor.fetchall()]
+
+    # Student Roster
+    cursor.execute("""
+        SELECT 
+            st.id, st.name, st.roll_no, st.section,
+            COUNT(DISTINCT s.problem_id) as problems_attempted,
+            COUNT(DISTINCT CASE WHEN s.status = 'solved' THEN s.problem_id END) as problems_solved,
+            COALESCE(SUM(s.run_count), 0) as total_runs,
+            COALESCE(SUM(s.time_spent_seconds), 0) as total_time_spent,
+            (SELECT COUNT(*) FROM submissions sub JOIN sessions ses ON sub.session_id = ses.id WHERE ses.student_id = st.id) as total_submissions,
+            MAX(COALESCE(s.updated_at, st.created_at)) as last_active
+        FROM students st
+        LEFT JOIN sessions s ON st.id = s.student_id
+        GROUP BY st.id
+        ORDER BY st.section ASC, CAST(st.roll_no AS INTEGER) ASC
+    """)
+    students_roster = [dict(row) for row in cursor.fetchall()]
+
+    conn.close()
+
+    # System Metrics via psutil
+    cpu_percent = psutil.cpu_percent(interval=0.1)
+    memory = psutil.virtual_memory()
+    disk = psutil.disk_usage('/')
+    
+    # Calculate requests per minute (RPM)
+    now = time.time()
+    rpm = sum(1 for t in request_times if now - t <= 60)
+
+    system_metrics = {
+        "cpu_percent": cpu_percent,
+        "memory_percent": memory.percent,
+        "disk_percent": disk.percent,
+        "requests_per_minute": rpm
+    }
+
+    # Model Quotas
+    model_quotas = get_quota_summary()
+
+    # API Key status
+    has_key = bool(get_api_key())
+    key = get_api_key() if has_key else ""
+    masked_key = (key[:4] + "..." + key[-4:]) if len(key) > 8 else ("***" if has_key else "Not Configured")
+
+    return {
+        "metrics": {
+            "total_students": total_students,
+            "total_submissions": total_submissions,
+            "total_solved": total_solved,
+            "total_runs": total_runs
+        },
+        "api_key_status": {
+            "has_key": has_key,
+            "masked_key": masked_key
+        },
+        "model_quotas": model_quotas,
+        "students_roster": students_roster,
+        "toughest_problems": toughest_problems,
+        "guidance_usage": guidance_usage,
+        "recent_activity": recent_activity,
+        "system_metrics": system_metrics
+    }
+
+@app.get("/api/admin/student/{student_id}")
+def get_admin_student_detail(student_id: int, admin: bool = Depends(verify_admin)):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, roll_no, section, created_at FROM students WHERE id = ?", (student_id,))
+    student = cursor.fetchone()
+    if not student:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    # Problems attempted with runs and guidance count
+    cursor.execute("""
+        SELECT 
+            p.id as problem_id, p.title, p.topic, p.difficulty,
+            s.id as session_id, s.status, s.help_level, 
+            COALESCE(s.run_count, 0) as run_count,
+            COALESCE(s.time_spent_seconds, 0) as time_spent_seconds,
+            s.updated_at,
+            (SELECT COUNT(*) FROM submissions sub WHERE sub.session_id = s.id) as guidance_count,
+            (SELECT sub.model_used FROM submissions sub WHERE sub.session_id = s.id ORDER BY sub.id DESC LIMIT 1) as last_model_used
+        FROM sessions s
+        JOIN problems p ON s.problem_id = p.id
+        WHERE s.student_id = ?
+        ORDER BY s.updated_at DESC
+    """, (student_id,))
+    problems = [dict(r) for r in cursor.fetchall()]
+
+    # Recent events
+    cursor.execute("""
+        SELECT event_type, event_data, created_at
+        FROM events
+        WHERE student_id = ?
+        ORDER BY id DESC LIMIT 20
+    """, (student_id,))
+    events = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+
+    return {
+        "student": dict(student),
+        "problems": problems,
+        "events": events
+    }
+
 
 # ─────────────────────────────────────────────
 # STATIC FILE SERVING
@@ -534,6 +941,22 @@ if os.path.exists(FRONTEND_DIR):
     if os.path.exists(js_dir):
         app.mount("/js", StaticFiles(directory=js_dir), name="js")
 
+
+@app.get("/favicon.ico")
+def serve_favicon_ico():
+    """Serve standard favicon.ico file."""
+    ico_file = os.path.join(FRONTEND_DIR, "favicon.ico")
+    if os.path.exists(ico_file):
+        return FileResponse(ico_file, media_type="image/x-icon")
+    raise HTTPException(status_code=404, detail="Favicon not found")
+
+@app.get("/favicon.svg")
+def serve_favicon_svg():
+    """Serve scalable vector favicon.svg file."""
+    svg_file = os.path.join(FRONTEND_DIR, "favicon.svg")
+    if os.path.exists(svg_file):
+        return FileResponse(svg_file, media_type="image/svg+xml")
+    raise HTTPException(status_code=404, detail="Favicon not found")
 
 @app.get("/")
 def serve_root():
@@ -577,3 +1000,11 @@ def serve_profile():
     if os.path.exists(profile_file):
         return FileResponse(profile_file)
     return {"message": "Profile page not found."}
+
+@app.get("/admin")
+def serve_admin():
+    """Serve the admin dashboard."""
+    admin_file = os.path.join(FRONTEND_DIR, "admin.html")
+    if os.path.exists(admin_file):
+        return FileResponse(admin_file)
+    return {"message": "Admin page not found."}

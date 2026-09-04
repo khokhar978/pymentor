@@ -35,6 +35,21 @@ def get_connection():
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
+def log_event(student_id=None, session_id=None, problem_id=None, event_type: str = "", event_data=None):
+    """Logs an action to the events table for detailed analytics and audit trails."""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        data_str = json.dumps(event_data or {})
+        cursor.execute("""
+        INSERT INTO events (student_id, session_id, problem_id, event_type, event_data)
+        VALUES (?, ?, ?, ?, ?)
+        """, (student_id, session_id, problem_id, event_type, data_str))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.getLogger("pymentor.database").error(f"Error logging telemetry event: {e}")
+
 def init_db():
     conn = get_connection()
     cursor = conn.cursor()
@@ -87,6 +102,22 @@ def init_db():
     except Exception:
         pass
 
+    # Ensure run_count and time_spent_seconds exist in existing sessions table
+    try:
+        cursor.execute("ALTER TABLE sessions ADD COLUMN run_count INTEGER DEFAULT 0")
+    except Exception:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE sessions ADD COLUMN time_spent_seconds INTEGER DEFAULT 0")
+    except Exception:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE sessions ADD COLUMN last_heartbeat_at TIMESTAMP")
+    except Exception:
+        pass
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS submissions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,8 +127,30 @@ def init_db():
         is_correct INTEGER DEFAULT 0,
         attempt_number INTEGER DEFAULT 1,
         model_used TEXT DEFAULT '',
+        simulated_output TEXT DEFAULT '',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (session_id) REFERENCES sessions(id)
+    );
+    """)
+
+    # Ensure simulated_output exists in existing submissions table
+    try:
+        cursor.execute("ALTER TABLE submissions ADD COLUMN simulated_output TEXT DEFAULT ''")
+    except Exception:
+        pass
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        student_id INTEGER,
+        session_id INTEGER,
+        problem_id INTEGER,
+        event_type TEXT NOT NULL,
+        event_data TEXT DEFAULT '{}',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (student_id) REFERENCES students(id),
+        FOREIGN KEY (session_id) REFERENCES sessions(id),
+        FOREIGN KEY (problem_id) REFERENCES problems(id)
     );
     """)
 

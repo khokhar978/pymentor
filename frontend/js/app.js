@@ -38,6 +38,7 @@ const el = {
     conceptsList:        document.getElementById('conceptsList'),
     copyInputBtn:        document.getElementById('copyInputBtn'),
     attemptCounter:      document.getElementById('attemptCounter'),
+    timeCounter:         document.getElementById('timeCounter'),
 
     // Toolbar
     levelSelect:         document.getElementById('levelSelect'),
@@ -79,6 +80,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupListeners();
     loadStudentIdentity();
     initPyodideWorker();
+    initHeartbeat();
 
     const params = new URLSearchParams(window.location.search);
     const pid = params.get('problem');
@@ -503,6 +505,9 @@ async function startSession() {
         if (session.is_solved) {
             el.guidanceStatus.innerHTML = '<span class="status-solved">Solved &#10003;</span>';
         }
+
+        // Initialize practice timer
+        startActiveTimer(session.time_spent_seconds || 0, session.is_solved);
     } catch (err) { console.error('Session error:', err); }
 }
 
@@ -560,6 +565,12 @@ async function getGuidance() {
         el.guidanceBody.scrollTop = 0;
 
         if (result.is_correct) {
+            isProblemCurrentlySolved = true;
+            if (result.time_spent_seconds) {
+                currentSessionSeconds = result.time_spent_seconds;
+            }
+            if (activeTimerInterval) clearInterval(activeTimerInterval);
+            updateTimerDisplay();
             el.guidanceStatus.innerHTML = '<span class="status-solved">Solved &#10003;</span>';
             triggerConfetti();
         } else {
@@ -583,5 +594,110 @@ async function getGuidance() {
 function triggerConfetti() {
     if (typeof confetti !== 'undefined') {
         confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+    }
+}
+
+// ──────────────────────────────────────────────
+// SERVER-AUTHORITATIVE HEARTBEAT (ACTIVE TIME TRACKING)
+// ──────────────────────────────────────────────
+let lastUserActivityTime = Date.now();
+let heartbeatInterval = null;
+
+function initHeartbeat() {
+    const markActive = () => {
+        lastUserActivityTime = Date.now();
+    };
+
+    ['keydown', 'mousedown', 'mousemove', 'scroll', 'touchstart'].forEach(evt => {
+        window.addEventListener(evt, markActive, { passive: true });
+    });
+
+    if (state.editor) {
+        state.editor.onDidChangeModelContent(markActive);
+    }
+
+    // Check & send heartbeat every 15 seconds
+    if (heartbeatInterval) clearInterval(heartbeatInterval);
+    heartbeatInterval = setInterval(sendHeartbeat, 15000);
+
+    // Re-anchor clock when returning to tab
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            markActive();
+            sendHeartbeat();
+        }
+    });
+}
+
+async function sendHeartbeat() {
+    // Only send heartbeat if:
+    // 1. Student is logged in with active session
+    // 2. Tab is currently visible/focused
+    // 3. User interacted in the last 60 seconds (not idle/away)
+    if (!state.student || !state.sessionId) return;
+    if (document.hidden) return;
+    if (Date.now() - lastUserActivityTime > 60000) return;
+
+    try {
+        const res = await fetch('/api/session/heartbeat', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + state.student.token
+            },
+            body: JSON.stringify({ session_id: state.sessionId })
+        });
+        if (res.ok) {
+            const data = await res.json();
+            if (data.total_time_spent && !isProblemCurrentlySolved) {
+                currentSessionSeconds = data.total_time_spent;
+                updateTimerDisplay();
+            }
+        }
+    } catch (err) {
+        // Silently catch background heartbeat network hiccups
+    }
+}
+
+// ──────────────────────────────────────────────
+// ACTIVE TIMER DISPLAY
+// ──────────────────────────────────────────────
+let activeTimerInterval = null;
+let currentSessionSeconds = 0;
+let isProblemCurrentlySolved = false;
+
+function startActiveTimer(initialSeconds, isSolved) {
+    currentSessionSeconds = initialSeconds || 0;
+    isProblemCurrentlySolved = Boolean(isSolved);
+    updateTimerDisplay();
+
+    if (activeTimerInterval) clearInterval(activeTimerInterval);
+
+    // Only keep ticking if problem not yet solved
+    if (!isProblemCurrentlySolved) {
+        activeTimerInterval = setInterval(() => {
+            // Tick when tab is active and user has interacted in last 60s
+            if (!document.hidden && (Date.now() - lastUserActivityTime <= 60000)) {
+                currentSessionSeconds++;
+                updateTimerDisplay();
+            }
+        }, 1000);
+    }
+}
+
+function updateTimerDisplay() {
+    if (!el.timeCounter) return;
+    const m = Math.floor(currentSessionSeconds / 60);
+    const s = currentSessionSeconds % 60;
+    const timeStr = m > 0 ? `${m}m ${s < 10 ? '0' : ''}${s}s` : `${s}s`;
+
+    if (isProblemCurrentlySolved) {
+        el.timeCounter.textContent = `✓ Solved in ${timeStr}`;
+        el.timeCounter.className = 'time-pill solved';
+        el.timeCounter.title = `Problem solved in ${timeStr}`;
+    } else {
+        el.timeCounter.textContent = `⏱ ${timeStr}`;
+        el.timeCounter.className = 'time-pill';
+        el.timeCounter.title = `Active practice time: ${timeStr}`;
     }
 }
