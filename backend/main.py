@@ -8,6 +8,7 @@ import json
 import logging
 import secrets
 import time
+from datetime import datetime, timedelta
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,18 +21,32 @@ from pymentor.backend.ai_mentor import evaluate_code, simulate_run, FALLBACK_MOD
 
 init_db()
 
-app = FastAPI(title="Python Practice API", version="2.0.0")
+app = FastAPI(title="Python Practice API", version="2.0.0", docs_url=None, redoc_url=None, openapi_url=None)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
+
+# Configure basic file logging to logs.txt
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs.txt")),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger("pymentor")
+
+ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "default-admin-secret-change-me")
+
+# Rate limiting dictionary: (roll_no, section) -> (failed_attempts, locked_until)
+login_attempts = {}
 
 
 # ─────────────────────────────────────────────
@@ -41,17 +56,29 @@ def get_current_student(request: Request):
     auth = request.headers.get("Authorization")
     if not auth or not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Unauthorized")
-    token = auth.split(" ")[1]
+    parts = auth.split(" ")
+    if len(parts) != 2:
+        raise HTTPException(status_code=401, detail="Malformed Authorization header")
+    token = parts[1]
     
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT student_id FROM auth_tokens WHERE token = ?", (token,))
+    cursor.execute(
+        "SELECT student_id FROM auth_tokens WHERE token = ? AND (expires_at IS NULL OR expires_at > datetime('now'))",
+        (token,)
+    )
     row = cursor.fetchone()
     conn.close()
     
     if not row:
-        raise HTTPException(status_code=401, detail="Invalid session token")
+        raise HTTPException(status_code=401, detail="Invalid or expired session token")
     return row["student_id"]
+
+def verify_admin(request: Request):
+    secret = request.headers.get("X-Admin-Secret")
+    if secret != ADMIN_SECRET:
+        raise HTTPException(status_code=401, detail="Admin unauthorized")
+    return True
 
 
 # ─────────────────────────────────────────────
@@ -93,7 +120,7 @@ class SetKeyRequest(BaseModel):
 # ─────────────────────────────────────────────
 
 @app.get("/api/status")
-def get_status():
+def get_status(admin: bool = Depends(verify_admin)):
     has_key = bool(get_api_key())
     masked_key = ""
     if has_key:
@@ -107,7 +134,7 @@ def get_status():
     }
 
 @app.post("/api/config/key")
-def set_api_key(req: SetKeyRequest):
+def set_api_key(req: SetKeyRequest, admin: bool = Depends(verify_admin)):
     key = req.api_key.strip()
     if not key:
         raise HTTPException(status_code=400, detail="API key cannot be empty")
@@ -176,6 +203,17 @@ def login_student(req: LoginRequest):
     section = req.section.strip().upper()
     roll_no = req.roll_no.strip()
     password = req.password.strip()
+    
+    # Rate Limiting Check
+    rate_key = (roll_no, section)
+    now = time.time()
+    if rate_key in login_attempts:
+        failures, locked_until = login_attempts[rate_key]
+        if now < locked_until:
+            raise HTTPException(status_code=429, detail="Too many failed attempts. Try again later.")
+        elif now >= locked_until and locked_until > 0:
+            # Lockout expired
+            login_attempts[rate_key] = (0, 0)
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -184,11 +222,23 @@ def login_student(req: LoginRequest):
     
     if not student or not verify_password(password, student["password"]):
         conn.close()
+        # Record failure
+        fails = login_attempts.get(rate_key, (0, 0))[0] + 1
+        lock = now + 300 if fails >= 5 else 0 # 5 minutes lockout after 5 attempts
+        login_attempts[rate_key] = (fails, lock)
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
+    # Success, reset failures
+    if rate_key in login_attempts:
+        del login_attempts[rate_key]
+
+    # Generate token with expiry (+7 days)
     token = secrets.token_hex(32)
-    cursor.execute("INSERT INTO auth_tokens (token, student_id) VALUES (?, ?)", (token, student["id"]))
+    expires = (datetime.utcnow() + timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+    cursor.execute("INSERT INTO auth_tokens (token, student_id, expires_at) VALUES (?, ?, ?)", (token, student["id"], expires))
     conn.commit()
+    
+    needs_password_change = verify_password("123", student["password"])
     conn.close()
 
     return {
@@ -196,11 +246,28 @@ def login_student(req: LoginRequest):
         "name": student["name"],
         "roll_no": student["roll_no"],
         "section": student["section"],
-        "token": token
+        "token": token,
+        "needs_password_change": needs_password_change
     }
+
+@app.post("/api/auth/logout")
+def logout(request: Request):
+    auth = request.headers.get("Authorization")
+    if auth and auth.startswith("Bearer "):
+        parts = auth.split(" ")
+        if len(parts) == 2:
+            token = parts[1]
+            conn = get_connection()
+            conn.execute("DELETE FROM auth_tokens WHERE token = ?", (token,))
+            conn.commit()
+            conn.close()
+    return {"message": "Logged out successfully"}
 
 @app.post("/api/auth/change-password")
 def change_password(req: ChangePasswordRequest, student_id: int = Depends(get_current_student)):
+    if len(req.new_password) < 6:
+        raise HTTPException(status_code=400, detail="New password must be at least 6 characters long")
+
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT password FROM students WHERE id = ?", (student_id,))

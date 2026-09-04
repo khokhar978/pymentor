@@ -19,10 +19,25 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('headerRoll').textContent = `Roll: ${student.roll_no} | Sec: ${student.section}`;
 
     // Setup Logout
-    document.getElementById('logoutBtn').addEventListener('click', () => {
+    document.getElementById('logoutBtn').addEventListener('click', async () => {
+        try {
+            await fetch('/api/auth/logout', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${student.token}` }
+            });
+        } catch (e) {
+            console.error('Logout failed:', e);
+        }
         localStorage.removeItem('pymentor_student');
         window.location.href = '/login';
     });
+
+    // Check force_change
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('force_change') === '1') {
+        showAlert('Please change your default password immediately to secure your account.', 'error');
+        document.getElementById('currentPwd').focus();
+    }
 
     // Setup Password Form
     const pwdForm = document.getElementById('pwdForm');

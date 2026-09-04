@@ -3,27 +3,26 @@ import json
 import os
 from datetime import datetime
 
+import sys
+import logging
+
 try:
     import bcrypt
-    has_bcrypt = True
 except ImportError:
-    has_bcrypt = False
+    logging.critical("CRITICAL: bcrypt library is not installed. Application refusing to start to prevent plaintext password fallback.")
+    sys.exit(1)
 
 def hash_password(password: str) -> str:
-    if has_bcrypt:
-        # bcrypt requires bytes
-        salt = bcrypt.gensalt()
-        hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
-        return hashed.decode('utf-8')
-    return password # Fallback if not installed yet
+    # bcrypt requires bytes
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+    return hashed.decode('utf-8')
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    if has_bcrypt:
-        try:
-            return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
-        except Exception:
-            return False
-    return plain_password == hashed_password
+    try:
+        return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+    except Exception:
+        return False
 
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "pymentor.db")
@@ -106,10 +105,17 @@ def init_db():
     CREATE TABLE IF NOT EXISTS auth_tokens (
         token TEXT PRIMARY KEY,
         student_id INTEGER NOT NULL,
+        expires_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (student_id) REFERENCES students(id)
     );
     """)
+
+    # Ensure expires_at exists in existing databases
+    try:
+        cursor.execute("ALTER TABLE auth_tokens ADD COLUMN expires_at TIMESTAMP")
+    except Exception:
+        pass
 
     # Seed / sync problems
     seed_problems(cursor)

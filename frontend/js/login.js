@@ -65,7 +65,11 @@ document.addEventListener('DOMContentLoaded', () => {
             localStorage.setItem('pymentor_student', JSON.stringify(data));
 
             // Redirect to target problem/practice or default problems list
-            redirectAfterLogin(nextUrl);
+            if (data.needs_password_change) {
+                window.location.href = '/profile?force_change=1';
+            } else {
+                redirectAfterLogin(nextUrl);
+            }
 
         } catch (err) {
             showError(err.message);
