@@ -55,14 +55,7 @@ const el = {
     guidanceBody:        document.getElementById('guidanceBody'),
     guidanceStatus:      document.getElementById('guidanceStatus'),
 
-    // Modal
-    studentModal:        document.getElementById('studentModal'),
-    studentForm:         document.getElementById('studentForm'),
-    studentRollInput:    document.getElementById('studentRollInput'),
-    studentSecInput:     document.getElementById('studentSecInput'),
-    studentPwdInput:     document.getElementById('studentPwdInput'),
-    loginAlert:          document.getElementById('loginAlert'),
-    loginSubmitBtn:      document.getElementById('loginSubmitBtn'),
+
 };
 
 // ──────────────────────────────────────────────
@@ -277,7 +270,7 @@ async function runCode() {
     if (state.sessionId) {
         fetch('/api/session/save', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + state.student.token },
             body: JSON.stringify({ session_id: state.sessionId, code })
         }).catch(err => console.warn('Background auto-save error:', err));
     }
@@ -368,13 +361,16 @@ function initMonaco() {
 // LISTENERS
 // ──────────────────────────────────────────────
 function setupListeners() {
-    el.switchStudentBtn.addEventListener('click', () => {
-        localStorage.removeItem('pymentor_student');
-        state.student = null;
-        openModal(true);
-    });
-    el.studentBadge.addEventListener('click',     () => openModal(false));
-    el.studentForm.addEventListener('submit', onStudentSubmit);
+    const handleProfileClick = () => {
+        if (state.student) {
+            window.location.href = '/profile';
+        } else {
+            const next = encodeURIComponent(window.location.pathname + window.location.search);
+            window.location.href = '/login?next=' + next;
+        }
+    };
+    if (el.switchStudentBtn) el.switchStudentBtn.addEventListener('click', handleProfileClick);
+    if (el.studentBadge) el.studentBadge.addEventListener('click', handleProfileClick);
     el.levelSelect.addEventListener('change', () => {
         state.helpLevel = parseInt(el.levelSelect.value, 10);
     });
@@ -402,89 +398,31 @@ function setupListeners() {
 function loadStudentIdentity() {
     const saved = localStorage.getItem('pymentor_student');
     if (saved) {
-        try { state.student = JSON.parse(saved); updateStudentDisplay(); return; }
-        catch (e) {}
-    }
-    openModal(true);
-}
-
-function openModal(reset = false) {
-    hideLoginError();
-    if (reset) {
-        el.studentRollInput.value = '';
-        el.studentPwdInput.value = '';
-        el.studentSecInput.value = 'E';
-    } else if (state.student) {
-        el.studentRollInput.value = state.student.roll_no || '';
-        el.studentSecInput.value = state.student.section || 'E';
-        el.studentPwdInput.value = '';
-    }
-    el.studentModal.classList.remove('hidden');
-    setTimeout(() => el.studentRollInput.focus(), 150);
-}
-
-function showLoginError(msg) {
-    if (el.loginAlert) {
-        el.loginAlert.textContent = msg;
-        el.loginAlert.classList.remove('hidden');
-    }
-}
-
-function hideLoginError() {
-    if (el.loginAlert) el.loginAlert.classList.add('hidden');
-}
-
-async function onStudentSubmit(e) {
-    e.preventDefault();
-    const section = el.studentSecInput.value;
-    const roll_no = el.studentRollInput.value.trim();
-    const password = el.studentPwdInput.value.trim();
-
-    if (!roll_no || !password) {
-        showLoginError('Please enter both Roll Number and Password.');
-        return;
-    }
-
-    if (el.loginSubmitBtn) {
-        el.loginSubmitBtn.disabled = true;
-        el.loginSubmitBtn.textContent = 'Verifying...';
-    }
-    hideLoginError();
-
-    try {
-        const res = await fetch('/api/student/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ section, roll_no, password })
-        });
-        const data = await res.json();
-        if (!res.ok) {
-            throw new Error(data.detail || 'Login failed. Please check credentials.');
+        try { 
+            state.student = JSON.parse(saved); 
+            updateStudentDisplay(); 
+            return; 
         }
-
-        state.student = data;
-        localStorage.setItem('pymentor_student', JSON.stringify(data));
-        updateStudentDisplay();
-        el.studentModal.classList.add('hidden');
-        if (state.problemId) await startSession();
-    } catch (err) {
-        showLoginError(err.message);
-    } finally {
-        if (el.loginSubmitBtn) {
-            el.loginSubmitBtn.disabled = false;
-            el.loginSubmitBtn.textContent = 'Log In to Lab';
+        catch (e) {
+            localStorage.removeItem('pymentor_student');
         }
     }
+    updateStudentDisplay();
+    // Redirect to login page preserving destination
+    const next = encodeURIComponent(window.location.pathname + window.location.search);
+    window.location.href = '/login?next=' + next;
 }
 
 function updateStudentDisplay() {
     if (!state.student) {
-        el.studentNameDisplay.textContent = 'Not Logged In';
-        el.studentSecDisplay.textContent = 'Login Required';
+        if (el.studentNameDisplay) el.studentNameDisplay.textContent = 'Not Logged In';
+        if (el.studentSecDisplay) el.studentSecDisplay.textContent = 'Click to Log In';
+        if (el.switchStudentBtn) el.switchStudentBtn.textContent = 'Log In';
         return;
     }
-    el.studentNameDisplay.textContent = state.student.name + ` (Roll ${state.student.roll_no})`;
-    el.studentSecDisplay.textContent = 'Sec ' + state.student.section;
+    if (el.studentNameDisplay) el.studentNameDisplay.textContent = state.student.name + ` (Roll ${state.student.roll_no})`;
+    if (el.studentSecDisplay) el.studentSecDisplay.textContent = 'Sec ' + state.student.section;
+    if (el.switchStudentBtn) el.switchStudentBtn.textContent = 'Profile';
 }
 
 // ──────────────────────────────────────────────
@@ -542,9 +480,8 @@ async function startSession() {
     if (!state.student || !state.problemId) return;
     try {
         const res = await fetch('/api/session/start', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + state.student.token },
             body: JSON.stringify({
-                student_id:  state.student.student_id,
                 problem_id:  state.problemId,
                 help_level:  state.helpLevel
             })
@@ -605,7 +542,7 @@ async function getGuidance() {
 
     try {
         const res = await fetch('/api/session/submit', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + state.student.token },
             body: JSON.stringify({
                 session_id:       state.sessionId,
                 code,

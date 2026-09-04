@@ -64,7 +64,7 @@ echo.
 
 :: 2. Check if required dependencies are installed
 echo [*] Checking required dependencies...
-!PY_CMD! -c "import fastapi, uvicorn, google.genai, pydantic, dotenv" >nul 2>nul
+!PY_CMD! -c "import fastapi, uvicorn, google.genai, pydantic, dotenv, passlib" >nul 2>nul
 if %errorlevel% neq 0 (
     echo [!] Missing dependencies detected.
     echo [*] Installing required packages using pip...

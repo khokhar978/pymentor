@@ -23,7 +23,7 @@
             <span class="s-name" id="studentNameDisplay">Not Logged In</span>
             <span class="s-sec" id="studentSecDisplay">Enter Details</span>
         </div>
-        <button id="switchStudentBtn" class="btn-switch">Switch</button>
+        <button id="switchStudentBtn" class="btn-switch">Profile</button>
     </header>
 
     <div class="problems-page">
@@ -40,35 +40,7 @@
         Python Practice Lab &mdash; <a href="https://khokhar.in.net" target="_blank">khokhar.in.net</a>
     </footer>
 
-    <!-- Student Login Modal -->
-    <div id="studentModal" class="modal-backdrop hidden">
-        <div class="modal-card">
-            <div class="modal-header">
-                <h2>Student Lab Login 🎓</h2>
-                <p>Authorized access only. Log in with your assigned details.</p>
-            </div>
-            <div id="loginAlert" class="alert-box hidden" style="color:var(--error);font-size:12.5px;background:var(--error-bg);padding:8px 12px;border-radius:4px;margin-bottom:12px;border:1px solid #fecaca;"></div>
-            <form id="studentForm" class="modal-form">
-                <div class="form-group">
-                    <label for="studentSecInput">Section</label>
-                    <select id="studentSecInput" required>
-                        <option value="E">Section E</option>
-                        <option value="F">Section F</option>
-                        <option value="G">Section G</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="studentRollInput">Roll Number</label>
-                    <input type="text" id="studentRollInput" placeholder="Enter your Roll Number" required autocomplete="off">
-                </div>
-                <div class="form-group">
-                    <label for="studentPwdInput">Password</label>
-                    <input type="password" id="studentPwdInput" placeholder="Enter password" required autocomplete="current-password">
-                </div>
-                <button type="submit" class="btn-primary" id="loginSubmitBtn">Log In to Lab</button>
-            </form>
-        </div>
-    </div>
+
 
     <script src="/js/problems.js"></script>
 </body>

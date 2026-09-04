@@ -1,7 +1,6 @@
 /**
  * Python Practice — Problems Page (problems.js)
- * Enforces authorized student login (Sections E, F, G; Roll 1-4)
- * Loads topic/problem data and renders card grid.
+ * Displays topic/problem card grid and manages student authentication status.
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -12,110 +11,48 @@ document.addEventListener('DOMContentLoaded', () => {
 // ── STUDENT AUTHENTICATION ────────────────────────
 function setupStudentUI() {
     const saved = localStorage.getItem('pymentor_student');
+    let student = null;
+
     if (saved) {
         try {
-            const student = JSON.parse(saved);
-            updateStudentDisplay(student);
+            student = JSON.parse(saved);
         } catch (e) {
-            openModal(true);
-        }
-    } else {
-        openModal(true);
-    }
-
-    document.getElementById('studentBadge')?.addEventListener('click', () => openModal(false));
-    document.getElementById('switchStudentBtn')?.addEventListener('click', () => {
-        localStorage.removeItem('pymentor_student');
-        openModal(true);
-    });
-    document.getElementById('studentForm')?.addEventListener('submit', onStudentSubmit);
-}
-
-function openModal(reset = false) {
-    const alertEl = document.getElementById('loginAlert');
-    if (alertEl) alertEl.classList.add('hidden');
-
-    if (reset) {
-        document.getElementById('studentRollInput').value = '';
-        document.getElementById('studentPwdInput').value  = '';
-        document.getElementById('studentSecInput').value  = 'E';
-    } else {
-        const saved = localStorage.getItem('pymentor_student');
-        if (saved) {
-            try {
-                const s = JSON.parse(saved);
-                document.getElementById('studentRollInput').value = s.roll_no || '';
-                document.getElementById('studentSecInput').value  = s.section || 'E';
-                document.getElementById('studentPwdInput').value  = '';
-            } catch (e) {}
+            localStorage.removeItem('pymentor_student');
         }
     }
 
-    document.getElementById('studentModal').classList.remove('hidden');
-    setTimeout(() => document.getElementById('studentRollInput').focus(), 150);
-}
+    updateStudentDisplay(student);
 
-function showLoginError(msg) {
-    const alertEl = document.getElementById('loginAlert');
-    if (alertEl) {
-        alertEl.textContent = msg;
-        alertEl.classList.remove('hidden');
-    }
-}
-
-function hideLoginError() {
-    const alertEl = document.getElementById('loginAlert');
-    if (alertEl) alertEl.classList.add('hidden');
-}
-
-async function onStudentSubmit(e) {
-    e.preventDefault();
-    const section = document.getElementById('studentSecInput').value;
-    const roll_no = document.getElementById('studentRollInput').value.trim();
-    const password = document.getElementById('studentPwdInput').value.trim();
-    const submitBtn = document.getElementById('loginSubmitBtn');
-
-    if (!roll_no || !password) {
-        showLoginError('Please enter both Roll Number and Password.');
-        return;
-    }
-
-    submitBtn.disabled = true;
-    submitBtn.textContent = 'Verifying...';
-    hideLoginError();
-
-    try {
-        const res = await fetch('/api/student/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ section, roll_no, password })
-        });
-        const data = await res.json();
-        if (!res.ok) {
-            throw new Error(data.detail || 'Login failed. Please check your credentials.');
+    const handleAuthClick = () => {
+        if (localStorage.getItem('pymentor_student')) {
+            window.location.href = '/profile';
+        } else {
+            window.location.href = '/login';
         }
+    };
 
-        localStorage.setItem('pymentor_student', JSON.stringify(data));
-        updateStudentDisplay(data);
-        document.getElementById('studentModal').classList.add('hidden');
-    } catch (err) {
-        showLoginError(err.message);
-    } finally {
-        submitBtn.disabled = false;
-        submitBtn.textContent = 'Log In to Lab';
-    }
+    const studentBadge = document.getElementById('studentBadge');
+    if (studentBadge) studentBadge.addEventListener('click', handleAuthClick);
+
+    const switchStudentBtn = document.getElementById('switchStudentBtn');
+    if (switchStudentBtn) switchStudentBtn.addEventListener('click', handleAuthClick);
 }
 
 function updateStudentDisplay(student) {
     const nameEl = document.getElementById('studentNameDisplay');
     const secEl  = document.getElementById('studentSecDisplay');
-    if (!student) {
-        nameEl.textContent = 'Not Logged In';
-        secEl.textContent  = 'Login Required';
+    const btnEl  = document.getElementById('switchStudentBtn');
+
+    if (!student || !student.name) {
+        if (nameEl) nameEl.textContent = 'Not Logged In';
+        if (secEl)  secEl.textContent  = 'Click to Log In';
+        if (btnEl)  btnEl.textContent  = 'Log In';
         return;
     }
-    nameEl.textContent = student.name + ` (Roll ${student.roll_no})`;
-    secEl.textContent  = 'Sec ' + student.section;
+
+    if (nameEl) nameEl.textContent = student.name + ` (Roll ${student.roll_no})`;
+    if (secEl)  secEl.textContent  = 'Sec ' + student.section;
+    if (btnEl)  btnEl.textContent  = 'Profile';
 }
 
 // ── TOPIC & PROBLEM CARDS ───────────────────

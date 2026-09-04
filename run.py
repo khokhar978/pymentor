@@ -51,4 +51,4 @@ if __name__ == "__main__":
     except ImportError:
         from backend.main import app
 
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=False, use_colors=False)

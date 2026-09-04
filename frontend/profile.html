@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Profile | Python Practice</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .profile-container {
+            max-width: 1000px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+        .profile-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+        .profile-header h1 {
+            font-size: 28px;
+            color: var(--text-heading);
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-body);
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 13.5px;
+            font-weight: 500;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.2s ease;
+        }
+        .btn-outline:hover {
+            background: var(--bg-hover);
+            border-color: var(--border-hover);
+        }
+        .btn-danger {
+            background: transparent;
+            border: 1px solid #ef4444;
+            color: #ef4444;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 13.5px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .btn-danger:hover {
+            background: #ef4444;
+            color: white;
+        }
+        .grid-2col {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+            align-items: start;
+        }
+        .profile-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .profile-card h3 {
+            margin-top: 0;
+            margin-bottom: 20px;
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-heading);
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 12px;
+        }
+        .stat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+        .stat-box {
+            background: var(--bg-main);
+            padding: 16px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--brand);
+            margin-bottom: 4px;
+        }
+        .stat-label {
+            font-size: 12.5px;
+            color: var(--text-faint);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        /* Topic Progress Bars */
+        .topic-mastery {
+            margin-bottom: 16px;
+        }
+        .topic-mastery-header {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            margin-bottom: 6px;
+            color: var(--text-body);
+        }
+        .topic-mastery-name {
+            font-weight: 500;
+        }
+        .topic-mastery-score {
+            color: var(--text-faint);
+        }
+        .progress-bar-bg {
+            height: 8px;
+            background: var(--bg-main);
+            border-radius: 4px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }
+        .progress-bar-fill {
+            height: 100%;
+            background: var(--brand);
+            border-radius: 4px;
+            transition: width 0.5s ease-out;
+        }
+        
+        /* Activity List */
+        .activity-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .activity-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .activity-item:last-child {
+            border-bottom: none;
+        }
+        .activity-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .activity-title {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-body);
+        }
+        .activity-time {
+            font-size: 12px;
+            color: var(--text-faint);
+        }
+        .activity-badge {
+            font-size: 12px;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-weight: 600;
+        }
+        .activity-badge.solved {
+            background: rgba(16, 185, 129, 0.15);
+            color: #10b981;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+        .activity-badge.progress {
+            background: rgba(245, 158, 11, 0.15);
+            color: #f59e0b;
+            border: 1px solid rgba(245, 158, 11, 0.3);
+        }
+        
+        /* Form adjustments */
+        .pwd-form .form-group {
+            margin-bottom: 16px;
+        }
+        .pwd-form input {
+            width: 100%;
+            padding: 10px 12px;
+            background: var(--bg-main);
+            border: 1px solid var(--border);
+            color: var(--text-body);
+            border-radius: 6px;
+            font-family: inherit;
+            font-size: 14px;
+        }
+        .pwd-form input:focus {
+            outline: none;
+            border-color: var(--brand);
+            box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+        }
+        
+        .loading-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: var(--bg-main);
+            z-index: 100;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            gap: 16px;
+            color: var(--text-body);
+        }
+    </style>
+</head>
+<body>
+    <div id="loadingOverlay" class="loading-overlay">
+        <div class="spinner-dark"></div>
+        <p>Loading Profile...</p>
+    </div>
+
+    <header class="site-header">
+        <a href="/" class="header-brand">
+            <span class="brand-icon">🐍</span>
+            <span>Python Practice</span>
+            <span class="brand-sub">BCA Lab</span>
+        </a>
+        <div class="header-spacer"></div>
+        <div class="student-badge">
+            <span>🎓</span>
+            <span class="s-name" id="navNameDisplay">Student</span>
+            <span class="s-sec" id="navSecDisplay">Sec</span>
+        </div>
+        <a href="/problems" class="btn-outline">Back to Problems</a>
+    </header>
+
+    <div class="profile-container">
+        <div class="profile-header">
+            <h1>
+                <span id="headerName">Student Name</span>
+                <span style="font-size: 16px; color: var(--text-faint); font-weight: 400;" id="headerRoll">Roll: -- | Sec: --</span>
+            </h1>
+            <button id="logoutBtn" class="btn-danger">Log Out</button>
+        </div>
+
+        <div class="grid-2col">
+            <!-- Left Column -->
+            <div style="display: flex; flex-direction: column; gap: 24px;">
+                <div class="profile-card">
+                    <h3>Overall Stats</h3>
+                    <div class="stat-grid">
+                        <div class="stat-box">
+                            <div class="stat-value" id="statCompleted">0</div>
+                            <div class="stat-label">Problems Solved</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-value" id="statAttempts">0</div>
+                            <div class="stat-label">Total Attempts</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-value" id="statSessions">0</div>
+                            <div class="stat-label">Active Sessions</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-value" id="statRate">0%</div>
+                            <div class="stat-label">Success Rate</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="profile-card">
+                    <h3>Topic Mastery</h3>
+                    <div id="topicMasteryContainer">
+                        <p style="color:var(--text-faint); font-size: 13px;">No topic data yet.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column -->
+            <div style="display: flex; flex-direction: column; gap: 24px;">
+                <div class="profile-card">
+                    <h3>Recent Activity</h3>
+                    <ul class="activity-list" id="activityList">
+                        <li style="color:var(--text-faint); font-size: 13px;">No recent activity.</li>
+                    </ul>
+                </div>
+
+                <div class="profile-card">
+                    <h3>Account Security</h3>
+                    <p style="font-size: 13px; color: var(--text-faint); margin-bottom: 16px;">
+                        Update your account password to ensure your lab sessions are secure.
+                    </p>
+                    <div id="pwdAlert" class="alert-box hidden" style="font-size: 13px; padding: 10px; border-radius: 6px; margin-bottom: 16px;"></div>
+                    <form id="pwdForm" class="pwd-form">
+                        <div class="form-group">
+                            <label style="display:block;font-size:13px;margin-bottom:6px;color:var(--text-body);">Current Password</label>
+                            <input type="password" id="currentPwd" required>
+                        </div>
+                        <div class="form-group">
+                            <label style="display:block;font-size:13px;margin-bottom:6px;color:var(--text-body);">New Password</label>
+                            <input type="password" id="newPwd" required>
+                        </div>
+                        <div class="form-group">
+                            <label style="display:block;font-size:13px;margin-bottom:6px;color:var(--text-body);">Confirm New Password</label>
+                            <input type="password" id="confirmPwd" required>
+                        </div>
+                        <button type="submit" id="pwdSubmitBtn" class="btn-primary" style="width: 100%;">Update Password</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/profile.js"></script>
+</body>
+</html>

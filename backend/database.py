@@ -1,12 +1,30 @@
-"""
-Database schema, connection management, and initial problem seeding for PyMentor.
-Uses SQLite for lightweight, zero-configuration local storage.
-"""
-
 import sqlite3
 import json
 import os
 from datetime import datetime
+
+try:
+    import bcrypt
+    has_bcrypt = True
+except ImportError:
+    has_bcrypt = False
+
+def hash_password(password: str) -> str:
+    if has_bcrypt:
+        # bcrypt requires bytes
+        salt = bcrypt.gensalt()
+        hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+        return hashed.decode('utf-8')
+    return password # Fallback if not installed yet
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    if has_bcrypt:
+        try:
+            return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+        except Exception:
+            return False
+    return plain_password == hashed_password
+
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "pymentor.db")
 
@@ -84,6 +102,15 @@ def init_db():
     );
     """)
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS auth_tokens (
+        token TEXT PRIMARY KEY,
+        student_id INTEGER NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (student_id) REFERENCES students(id)
+    );
+    """)
+
     # Seed / sync problems
     seed_problems(cursor)
 
@@ -92,6 +119,15 @@ def init_db():
     s_count = cursor.fetchone()["count"]
     if s_count == 0:
         seed_students(cursor)
+
+    # Migrate plain-text passwords to bcrypt hashes
+    cursor.execute("SELECT id, password FROM students")
+    for row in cursor.fetchall():
+        pid, pwd = row["id"], row["password"]
+        # bcrypt hashes start with $2b$ or $2a$, so we can detect plain text
+        if pwd and not pwd.startswith("$2"):
+            hashed = hash_password(pwd)
+            cursor.execute("UPDATE students SET password = ? WHERE id = ?", (hashed, pid))
 
     conn.commit()
     conn.close()
@@ -104,7 +140,7 @@ def seed_students(cursor):
                 "roll_no": str(r),
                 "name": f"User {r}",
                 "section": sec,
-                "password": "123"
+                "password": hash_password("123")
             })
     for s in authorized:
         cursor.execute("""

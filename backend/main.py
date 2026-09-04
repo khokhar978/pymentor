@@ -4,124 +4,77 @@ Serves REST API and multi-page frontend.
 """
 
 import os
-import sys
 import json
-import time
 import logging
-from logging.handlers import RotatingFileHandler
+import secrets
+import time
 from typing import Optional, List
-from fastapi import FastAPI, HTTPException, Header, Request
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 
-# ─────────────────────────────────────────────
-# DUAL AUDIT LOGGING SETUP (Console + logs.txt)
-# ─────────────────────────────────────────────
-LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs.txt")
-LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-formatter = logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT)
-
-# File Handler: writes clean audit trail to logs.txt
-file_handler = RotatingFileHandler(LOG_FILE, maxBytes=15*1024*1024, backupCount=3, encoding="utf-8")
-file_handler.setFormatter(formatter)
-file_handler.setLevel(logging.INFO)
-
-# Console Handler: displays live messages in the server terminal
-console_handler = logging.StreamHandler(sys.stdout)
-console_handler.setFormatter(formatter)
-console_handler.setLevel(logging.INFO)
-
-logger = logging.getLogger("pymentor")
-logger.setLevel(logging.INFO)
-logger.handlers.clear()
-logger.addHandler(file_handler)
-logger.addHandler(console_handler)
-logger.propagate = False
-
-# Ensure submodule loggers (ai_mentor, quota_manager) pipe directly into both handlers
-for subname in ["pymentor.ai", "pymentor.quota"]:
-    sub = logging.getLogger(subname)
-    sub.setLevel(logging.INFO)
-    sub.handlers.clear()
-    sub.propagate = True
-
-try:
-    from pymentor.backend.database import get_connection, init_db
-    from pymentor.backend.ai_mentor import evaluate_code, simulate_run, get_api_key, FALLBACK_MODELS
-except ImportError:
-    from backend.database import get_connection, init_db
-    from backend.ai_mentor import evaluate_code, simulate_run, get_api_key, FALLBACK_MODELS
+from pymentor.backend.database import get_connection, init_db, verify_password, hash_password
+from pymentor.backend.ai_mentor import evaluate_code, simulate_run, FALLBACK_MODELS, get_api_key
 
 init_db()
 
-# Turn off auto-docs in production to prevent automated scanner fingerprinting
-app = FastAPI(
-    title="Python Practice API",
-    version="2.0.0",
-    docs_url=None,
-    redoc_url=None,
-    openapi_url=None
-)
+app = FastAPI(title="Python Practice API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-@app.middleware("http")
-async def audit_http_middleware(request: Request, call_next):
-    start_time = time.time()
-    client_ip = request.client.host if request.client else "unknown"
-    method = request.method
-    path = request.url.path
-
-    response = await call_next(request)
-
-    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
-    response.headers["Cross-Origin-Embedder-Policy"] = "credentialless"
-
-    duration_ms = round((time.time() - start_time) * 1000, 1)
-    status_code = response.status_code
-
-    # Log API accesses and root HTML page hits for auditing
-    if path.startswith("/api") or path in ["/", "/practice"]:
-        logger.info(f"[HTTP] {client_ip} - {method} {path} -> {status_code} ({duration_ms}ms)")
-
-    return response
-
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
+logger = logging.getLogger("pymentor")
+
+
+# ─────────────────────────────────────────────
+# DEPENDENCIES
+# ─────────────────────────────────────────────
+def get_current_student(request: Request):
+    auth = request.headers.get("Authorization")
+    if not auth or not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    token = auth.split(" ")[1]
+    
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT student_id FROM auth_tokens WHERE token = ?", (token,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        raise HTTPException(status_code=401, detail="Invalid session token")
+    return row["student_id"]
 
 
 # ─────────────────────────────────────────────
 # REQUEST MODELS
 # ─────────────────────────────────────────────
-
-class StudentLoginRequest(BaseModel):
+class LoginRequest(BaseModel):
     section: str
     roll_no: str
     password: str
 
 class ChangePasswordRequest(BaseModel):
-    student_id: int
-    old_password: str
+    current_password: str
     new_password: str
 
 class SessionStartRequest(BaseModel):
-    student_id: int
     problem_id: int
     help_level: Optional[int] = 1
 
-class RunCodeRequest(BaseModel):
+class SessionSaveRequest(BaseModel):
     session_id: int
     code: str
 
-class SaveCodeRequest(BaseModel):
+class RunCodeRequest(BaseModel):
     session_id: int
     code: str
 
@@ -140,15 +93,7 @@ class SetKeyRequest(BaseModel):
 # ─────────────────────────────────────────────
 
 @app.get("/api/status")
-def get_status(request: Request, x_admin_secret: Optional[str] = Header(None)):
-    admin_secret = os.environ.get("ADMIN_SECRET", "").strip()
-    if not admin_secret:
-        admin_secret = "pymentor-admin-secret"
-    if x_admin_secret != admin_secret:
-        client_ip = request.client.host if request.client else "unknown"
-        logger.warning(f"[SECURITY] Unauthorized access to /api/status blocked from IP={client_ip}")
-        raise HTTPException(status_code=403, detail="Access Denied")
-
+def get_status():
     has_key = bool(get_api_key())
     masked_key = ""
     if has_key:
@@ -162,15 +107,7 @@ def get_status(request: Request, x_admin_secret: Optional[str] = Header(None)):
     }
 
 @app.post("/api/config/key")
-def set_api_key(req: SetKeyRequest, request: Request, x_admin_secret: Optional[str] = Header(None)):
-    admin_secret = os.environ.get("ADMIN_SECRET", "").strip()
-    if not admin_secret:
-        admin_secret = "pymentor-admin-secret"
-    if x_admin_secret != admin_secret:
-        client_ip = request.client.host if request.client else "unknown"
-        logger.warning(f"[SECURITY] Unauthorized attempt to update API key from IP={client_ip}")
-        raise HTTPException(status_code=403, detail="Forbidden: Valid X-Admin-Secret header required.")
-
+def set_api_key(req: SetKeyRequest):
     key = req.api_key.strip()
     if not key:
         raise HTTPException(status_code=400, detail="API key cannot be empty")
@@ -178,7 +115,6 @@ def set_api_key(req: SetKeyRequest, request: Request, x_admin_secret: Optional[s
     env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
     with open(env_path, "w", encoding="utf-8") as f:
         f.write(f"GEMINI_API_KEY={key}\n")
-    logger.info("[ADMIN] Gemini API Key updated successfully by admin")
     return {"message": "API Key saved successfully!", "has_api_key": True}
 
 @app.get("/api/topics")
@@ -236,104 +172,61 @@ def get_problem(problem_id: int):
     }
 
 @app.post("/api/student/login")
-def login_student(req: StudentLoginRequest, request: Request):
-    import re
-    client_ip = request.client.host if request.client else "unknown"
-    raw_section = (req.section or "").strip().upper()
-    raw_roll = (req.roll_no or "").strip()
-    password = (req.password or "").strip()
-
-    logger.info(f"[AUTH] Login attempt from IP={client_ip}: section='{raw_section}', roll='{raw_roll}'")
-
-    if not raw_section or not raw_roll or not password:
-        logger.warning(f"[AUTH] Login rejected: missing fields from IP={client_ip}")
-        raise HTTPException(status_code=400, detail="Section, Roll Number, and Password are required.")
-
-    # Normalize roll_no: strip 'User', 'Roll', 'E-', leading zeroes (e.g. '01' -> '1', 'User 1' -> '1')
-    clean_roll = raw_roll.lower().replace("user", "").replace("roll", "").replace("-", "").strip()
-    digit_match = re.search(r'\d+', clean_roll)
-    if digit_match:
-        norm_roll = str(int(digit_match.group(0)))
-    else:
-        norm_roll = clean_roll
-
-    section = raw_section
+def login_student(req: LoginRequest):
+    section = req.section.strip().upper()
+    roll_no = req.roll_no.strip()
+    password = req.password.strip()
 
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-    SELECT id, name, roll_no, section, password 
-    FROM students 
-    WHERE section = ? AND (roll_no = ? OR roll_no = ?)
-    """, (section, norm_roll, raw_roll))
+    cursor.execute("SELECT id, name, section, roll_no, password FROM students WHERE roll_no = ? AND section = ?", (roll_no, section))
     student = cursor.fetchone()
+    
+    if not student or not verify_password(password, student["password"]):
+        conn.close()
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    token = secrets.token_hex(32)
+    cursor.execute("INSERT INTO auth_tokens (token, student_id) VALUES (?, ?)", (token, student["id"]))
+    conn.commit()
     conn.close()
-
-    # Prevent roll enumeration: uniform 401 response for non-existent roll or incorrect password
-    if not student or student["password"] != password:
-        logger.warning(f"[AUTH] Login FAILED from IP={client_ip}: section='{raw_section}', roll='{raw_roll}' (Invalid credentials)")
-        raise HTTPException(
-            status_code=401, 
-            detail="Access Denied: Invalid credentials"
-        )
-
-    logger.info(f"[AUTH] Login SUCCESS: ID={student['id']}, Name='{student['name']}', Section={student['section']}, Roll={student['roll_no']} (IP={client_ip})")
 
     return {
         "student_id": student["id"],
         "name": student["name"],
         "roll_no": student["roll_no"],
-        "section": student["section"]
+        "section": student["section"],
+        "token": token
     }
 
-@app.post("/api/student/change-password")
-def change_password(req: ChangePasswordRequest):
-    new_pwd = req.new_password.strip()
-    if not new_pwd or len(new_pwd) < 3:
-        raise HTTPException(status_code=400, detail="New password must be at least 3 characters long.")
-    
+@app.post("/api/auth/change-password")
+def change_password(req: ChangePasswordRequest, student_id: int = Depends(get_current_student)):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, password FROM students WHERE id = ?", (req.student_id,))
+    cursor.execute("SELECT password FROM students WHERE id = ?", (student_id,))
     student = cursor.fetchone()
-
-    if not student or student["password"] != req.old_password.strip():
+    
+    if not verify_password(req.current_password, student["password"]):
         conn.close()
-        raise HTTPException(status_code=401, detail="Current password is incorrect.")
-
-    cursor.execute("UPDATE students SET password = ? WHERE id = ?", (new_pwd, req.student_id))
+        raise HTTPException(status_code=400, detail="Incorrect current password")
+    
+    hashed = hash_password(req.new_password)
+    cursor.execute("UPDATE students SET password = ? WHERE id = ?", (hashed, student_id))
     conn.commit()
     conn.close()
-    logger.info(f"[AUTH] Password updated successfully for Student ID={req.student_id}")
-    return {"message": "Password updated successfully!"}
-
-@app.get("/api/quota")
-def check_quota_status(request: Request, x_admin_secret: Optional[str] = Header(None)):
-    admin_secret = os.environ.get("ADMIN_SECRET", "").strip()
-    if not admin_secret:
-        admin_secret = "pymentor-admin-secret"
-    if x_admin_secret != admin_secret:
-        client_ip = request.client.host if request.client else "unknown"
-        logger.warning(f"[SECURITY] Unauthorized access to /api/quota blocked from IP={client_ip}")
-        raise HTTPException(status_code=403, detail="Access Denied")
-
-    try:
-        from pymentor.backend.quota_manager import get_quota_summary
-    except ImportError:
-        from backend.quota_manager import get_quota_summary
-    return {"quotas": get_quota_summary()}
+    return {"message": "Password updated successfully"}
 
 @app.post("/api/session/start")
-def start_session(req: SessionStartRequest):
+def start_session(req: SessionStartRequest, student_id: int = Depends(get_current_student)):
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
-    SELECT id, help_level, status, last_code
+    SELECT id, help_level, status
     FROM sessions
     WHERE student_id = ? AND problem_id = ?
     ORDER BY id DESC LIMIT 1
-    """, (req.student_id, req.problem_id))
+    """, (student_id, req.problem_id))
     session = cursor.fetchone()
 
     if session:
@@ -346,11 +239,9 @@ def start_session(req: SessionStartRequest):
         cursor.execute("""
         INSERT INTO sessions (student_id, problem_id, help_level)
         VALUES (?, ?, ?)
-        """, (req.student_id, req.problem_id, req.help_level))
+        """, (student_id, req.problem_id, req.help_level))
         conn.commit()
         session_id = cursor.lastrowid
-
-    logger.info(f"[SESSION] Student ID={req.student_id} opened problem ID={req.problem_id} (session_id={session_id}, level={req.help_level})")
 
     cursor.execute("""
     SELECT attempt_number, code, ai_response, is_correct, created_at
@@ -359,13 +250,11 @@ def start_session(req: SessionStartRequest):
     ORDER BY attempt_number ASC
     """, (session_id,))
     submissions = [dict(r) for r in cursor.fetchall()]
+    
+    # Retrieve last_code from session
+    cursor.execute("SELECT last_code FROM sessions WHERE id = ?", (session_id,))
+    last_code = cursor.fetchone()["last_code"]
     conn.close()
-
-    last_code = ""
-    if session and session["last_code"]:
-        last_code = session["last_code"]
-    elif submissions:
-        last_code = submissions[-1]["code"]
 
     is_solved = any(s["is_correct"] == 1 for s in submissions)
 
@@ -379,36 +268,34 @@ def start_session(req: SessionStartRequest):
     }
 
 @app.post("/api/session/save")
-def save_session_code(req: SaveCodeRequest):
+def save_session(req: SessionSaveRequest, student_id: int = Depends(get_current_student)):
     conn = get_connection()
     cursor = conn.cursor()
+    cursor.execute("SELECT id FROM sessions WHERE id = ? AND student_id = ?", (req.session_id, student_id))
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Session not found")
+        
     cursor.execute("UPDATE sessions SET last_code = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (req.code, req.session_id))
     conn.commit()
     conn.close()
-    return {"status": "saved"}
-
+    return {"message": "Saved"}
 
 @app.post("/api/session/run")
-def run_code_simulated(req: RunCodeRequest):
-    """
-    Simulates Python code execution and returns terminal output.
-    Abstraction layer: real subprocess/Docker execution can replace simulate_run later.
-    """
+def run_code_simulated(req: RunCodeRequest, student_id: int = Depends(get_current_student)):
     code = req.code.strip()
     if not code:
         raise HTTPException(status_code=400, detail="Code cannot be empty")
 
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT problem_id FROM sessions WHERE id = ?", (req.session_id,))
+    cursor.execute("SELECT problem_id FROM sessions WHERE id = ? AND student_id = ?", (req.session_id, student_id))
     session = cursor.fetchone()
-    conn.close()
-
+    
     if not session:
+        conn.close()
         raise HTTPException(status_code=404, detail="Session not found")
 
-    conn = get_connection()
-    cursor = conn.cursor()
     cursor.execute("""
     SELECT title, topic, difficulty, description, sample_input, sample_output, ai_rubric
     FROM problems WHERE id = ?
@@ -419,9 +306,8 @@ def run_code_simulated(req: RunCodeRequest):
     result = simulate_run(code=code, problem=problem)
     return result
 
-
 @app.post("/api/session/submit")
-def submit_code(req: SubmitCodeRequest):
+def submit_code(req: SubmitCodeRequest, student_id: int = Depends(get_current_student)):
     code = req.code.strip()
     if not code:
         raise HTTPException(status_code=400, detail="Please write your Python code before requesting guidance!")
@@ -434,13 +320,13 @@ def submit_code(req: SubmitCodeRequest):
            st.name as student_name, st.section as student_section, st.roll_no as student_roll
     FROM sessions s
     JOIN students st ON s.student_id = st.id
-    WHERE s.id = ?
-    """, (req.session_id,))
+    WHERE s.id = ? AND s.student_id = ?
+    """, (req.session_id, student_id))
     session = cursor.fetchone()
 
     if not session:
         conn.close()
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail="Session not found or not authorized")
 
     problem_id = session["problem_id"]
     help_level = req.help_level or session["help_level"]
@@ -500,6 +386,74 @@ def submit_code(req: SubmitCodeRequest):
         "error": eval_result.get("error")
     }
 
+@app.get("/api/student/profile")
+def get_profile(student_id: int = Depends(get_current_student)):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, roll_no, section FROM students WHERE id = ?", (student_id,))
+    student = cursor.fetchone()
+    if not student:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    # 1. Overall Stats
+    cursor.execute("SELECT COUNT(*) as total_sessions FROM sessions WHERE student_id = ?", (student_id,))
+    total_sessions = cursor.fetchone()["total_sessions"]
+
+    cursor.execute("SELECT COUNT(DISTINCT problem_id) as completed_problems FROM sessions WHERE student_id = ? AND status = 'solved'", (student_id,))
+    completed_problems = cursor.fetchone()["completed_problems"]
+    
+    cursor.execute("""
+        SELECT COUNT(*) as total_attempts 
+        FROM submissions sub 
+        JOIN sessions s ON sub.session_id = s.id 
+        WHERE s.student_id = ?
+    """, (student_id,))
+    total_attempts = cursor.fetchone()["total_attempts"]
+
+    # 2. Topic Mastery
+    cursor.execute("""
+        SELECT p.topic, 
+               COUNT(p.id) as total,
+               SUM(CASE WHEN s.status = 'solved' THEN 1 ELSE 0 END) as completed
+        FROM problems p
+        LEFT JOIN sessions s ON p.id = s.problem_id AND s.student_id = ?
+        GROUP BY p.topic
+        ORDER BY p.topic
+    """, (student_id,))
+    topic_mastery = [dict(row) for row in cursor.fetchall()]
+    
+    # Fill in None completions with 0
+    for t in topic_mastery:
+        if t["completed"] is None:
+            t["completed"] = 0
+
+    # 3. Activity History
+    cursor.execute("""
+        SELECT p.title as problem_title, s.status, s.updated_at, 
+               s.status = 'solved' as is_solved,
+               (SELECT COUNT(*) FROM submissions sub WHERE sub.session_id = s.id) as attempts_count
+        FROM sessions s
+        JOIN problems p ON s.problem_id = p.id
+        WHERE s.student_id = ?
+        ORDER BY s.updated_at DESC
+        LIMIT 10
+    """, (student_id,))
+    activity_history = [dict(row) for row in cursor.fetchall()]
+
+    conn.close()
+
+    return {
+        "student": dict(student),
+        "stats": {
+            "completed_problems": completed_problems,
+            "total_attempts": total_attempts,
+            "total_sessions": total_sessions
+        },
+        "topic_mastery": topic_mastery,
+        "activity_history": activity_history
+    }
+
 
 # ─────────────────────────────────────────────
 # STATIC FILE SERVING
@@ -515,6 +469,12 @@ if os.path.exists(FRONTEND_DIR):
 
 
 @app.get("/")
+def serve_root():
+    """Redirect root to /problems."""
+    return RedirectResponse(url="/problems")
+
+
+@app.get("/problems")
 def serve_problems():
     """Serve the problems browser page."""
     problems_file = os.path.join(FRONTEND_DIR, "problems.html")
@@ -526,6 +486,15 @@ def serve_problems():
     return {"message": "Python Practice API is running. Frontend not found."}
 
 
+@app.get("/login")
+def serve_login():
+    """Serve the login page."""
+    login_file = os.path.join(FRONTEND_DIR, "login.html")
+    if os.path.exists(login_file):
+        return FileResponse(login_file)
+    raise HTTPException(status_code=404, detail="Login page not found")
+
+
 @app.get("/practice")
 def serve_practice():
     """Serve the code practice page."""
@@ -533,3 +502,11 @@ def serve_practice():
     if os.path.exists(index_file):
         return FileResponse(index_file)
     raise HTTPException(status_code=404, detail="Practice page not found")
+    
+@app.get("/profile")
+def serve_profile():
+    """Serve the profile dashboard."""
+    profile_file = os.path.join(FRONTEND_DIR, "profile.html")
+    if os.path.exists(profile_file):
+        return FileResponse(profile_file)
+    return {"message": "Profile page not found."}

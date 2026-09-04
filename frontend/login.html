@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Login | Python Practice</title>
+    <meta name="description" content="Sign in to your Python Practice BCA Lab account to track your progress and solve programming problems.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .login-page-wrapper {
+            min-height: calc(100vh - var(--header-height) - 60px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 30px 16px;
+        }
+
+        .login-card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            width: 100%;
+            max-width: 420px;
+            padding: 36px 32px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.06), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
+            animation: fadeIn 0.25s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .login-header {
+            text-align: center;
+            margin-bottom: 28px;
+        }
+
+        .login-logo {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 56px;
+            height: 56px;
+            background: var(--accent-light);
+            border: 1px solid var(--accent-border);
+            border-radius: 14px;
+            font-size: 28px;
+            margin-bottom: 16px;
+        }
+
+        .login-title {
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 6px;
+            letter-spacing: -0.02em;
+        }
+
+        .login-subtitle {
+            font-size: 13.5px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+
+        .login-alert {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 12px 14px;
+            border-radius: var(--radius-sm);
+            font-size: 13px;
+            margin-bottom: 20px;
+            background: var(--error-bg);
+            border: 1px solid #fecaca;
+            color: var(--error);
+            animation: shake 0.3s ease-in-out;
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-4px); }
+            75% { transform: translateX(4px); }
+        }
+
+        .login-form {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+
+        .login-field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .login-field label {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .login-field input,
+        .login-field select {
+            width: 100%;
+            padding: 11px 14px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-size: 14px;
+            color: var(--text-primary);
+            background: #ffffff;
+            outline: none;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .login-field input:focus,
+        .login-field select:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+        }
+
+        .login-submit-btn {
+            width: 100%;
+            padding: 12px;
+            background: var(--accent);
+            color: #ffffff;
+            border: none;
+            border-radius: 6px;
+            font-size: 14.5px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 6px;
+            transition: background 0.15s ease, transform 0.05s;
+        }
+
+        .login-submit-btn:hover {
+            background: var(--accent-hover);
+        }
+
+        .login-submit-btn:active {
+            transform: scale(0.99);
+        }
+
+        .login-submit-btn:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+        }
+
+        .login-help-card {
+            margin-top: 24px;
+            padding: 14px 16px;
+            background: #f8fafc;
+            border: 1px dashed var(--border-color);
+            border-radius: 8px;
+            font-size: 12.5px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+
+        .login-help-card strong {
+            color: var(--text-primary);
+        }
+
+        .login-nav-link {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 13.5px;
+            color: var(--text-secondary);
+        }
+
+        .login-nav-link a {
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .login-nav-link a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <header class="site-header">
+        <a href="/problems" class="header-brand">
+            <span class="brand-icon">🐍</span>
+            <span>Python Practice</span>
+            <span class="brand-sub">BCA Lab</span>
+        </a>
+        <div class="header-spacer"></div>
+        <a href="/problems" class="btn-outline" style="font-size: 13px; padding: 6px 14px; border: var(--border); border-radius: 6px; text-decoration: none; color: var(--text-primary); font-weight: 500;">
+            Browse Problems &rarr;
+        </a>
+    </header>
+
+    <main class="login-page-wrapper">
+        <div class="login-card">
+            <div class="login-header">
+                <div class="login-logo">🎓</div>
+                <h1 class="login-title">Student Lab Login</h1>
+                <p class="login-subtitle">Sign in with your assigned details to access lab problems and keep your progress synced.</p>
+            </div>
+
+            <div id="loginAlert" class="login-alert hidden">
+                <span id="alertMessage"></span>
+            </div>
+
+            <form id="loginForm" class="login-form">
+                <div class="login-field">
+                    <label for="sectionSelect">Section</label>
+                    <select id="sectionSelect" required>
+                        <option value="E">Section E</option>
+                        <option value="F">Section F</option>
+                        <option value="G">Section G</option>
+                    </select>
+                </div>
+
+                <div class="login-field">
+                    <label for="rollInput">Roll Number</label>
+                    <input type="text" id="rollInput" placeholder="e.g. 1, 2, 3..." required autocomplete="username" autofocus>
+                </div>
+
+                <div class="login-field">
+                    <label for="pwdInput">Password</label>
+                    <input type="password" id="pwdInput" placeholder="Enter your lab password" required autocomplete="current-password">
+                </div>
+
+                <button type="submit" class="login-submit-btn" id="loginSubmitBtn">
+                    <span id="btnText">Log In to Lab</span>
+                    <div class="spinner hidden" id="btnSpinner"></div>
+                </button>
+            </form>
+
+            <div class="login-help-card">
+                💡 <strong>Lab Notice:</strong> Default initial password is <code>123</code>. You can change your password anytime from your Profile.
+            </div>
+
+            <div class="login-nav-link">
+                Looking for practice problems? <a href="/problems">View Problems</a>
+            </div>
+        </div>
+    </main>
+
+    <footer class="page-footer">
+        Python Practice Lab &mdash; <a href="https://khokhar.in.net" target="_blank">khokhar.in.net</a>
+    </footer>
+
+    <script src="/js/login.js"></script>
+</body>
+</html>
