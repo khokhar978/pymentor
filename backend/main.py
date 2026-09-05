@@ -718,6 +718,8 @@ def submit_code(req: SubmitCodeRequest, student_id: int = Depends(require_passwo
     else:
         cursor.execute("UPDATE sessions SET last_code = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (code, req.session_id,))
 
+    conn.commit()
+
     # Get updated total time spent
     cursor.execute("SELECT time_spent_seconds FROM sessions WHERE id = ?", (req.session_id,))
     s_row = cursor.fetchone()

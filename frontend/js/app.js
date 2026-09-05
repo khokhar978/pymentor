@@ -17,7 +17,8 @@ const state = {
     isRunning:        false,
     isGuidanceLoading: false,
     lastOutput:       null,
-    editor:           null
+    editor:           null,
+    pendingCode:      null
 };
 
 const el = {
@@ -322,13 +323,32 @@ function finishExecution(hasError) {
 // ──────────────────────────────────────────────
 // MONACO EDITOR
 // ──────────────────────────────────────────────
+let monacoReadyResolve = null;
+const monacoReadyPromise = new Promise((resolve) => {
+    monacoReadyResolve = resolve;
+});
+
+async function setEditorCode(code) {
+    if (typeof code !== 'string') return;
+    state.pendingCode = code;
+    if (state.editor) {
+        state.editor.setValue(code);
+    } else {
+        await monacoReadyPromise;
+        if (state.editor) {
+            state.editor.setValue(code);
+        }
+    }
+}
+
 function initMonaco() {
     require.config({
         paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' }
     });
     require(['vs/editor/editor.main'], function () {
+        const initialValue = state.pendingCode || '# Write your Python code here\n\n';
         state.editor = monaco.editor.create(document.getElementById('monacoEditor'), {
-            value: '# Write your Python code here\n\n',
+            value: initialValue,
             language: 'python',
             theme: 'vs-dark',
             fontSize: 13.5,
@@ -343,6 +363,8 @@ function initMonaco() {
             padding: { top: 12, bottom: 12 },
             wordWrap: 'off',
         });
+
+        monacoReadyResolve(state.editor);
 
         // Auto-save code edits to localStorage on every change
         state.editor.onDidChangeModelContent(() => {
@@ -464,12 +486,14 @@ function renderProblem(p) {
         el.conceptsList.appendChild(tag);
     });
 
-    // Check if student has an unsaved local draft first
+    // Check if student has an unsaved local draft first, otherwise starter code
     const savedDraft = localStorage.getItem('pymentor_draft_' + p.id);
-    if (savedDraft && savedDraft.trim() && state.editor) {
-        state.editor.setValue(savedDraft);
-    } else if (state.editor) {
-        state.editor.setValue(p.starter_code || '# Write your Python code here\n\n');
+    if (savedDraft && savedDraft.trim()) {
+        setEditorCode(savedDraft);
+    } else if (p.starter_code && p.starter_code.trim()) {
+        setEditorCode(p.starter_code);
+    } else {
+        setEditorCode('# Write your Python code here\n\n');
     }
 
     document.title = p.title + ' | Python Practice';
@@ -504,10 +528,10 @@ async function startSession() {
 
         // Restore saved code: check local draft first, then server database last_code
         const savedDraft = localStorage.getItem('pymentor_draft_' + state.problemId);
-        if (savedDraft && savedDraft.trim() && state.editor) {
-            state.editor.setValue(savedDraft);
-        } else if (session.last_code && session.last_code.trim() && state.editor) {
-            state.editor.setValue(session.last_code);
+        if (savedDraft && savedDraft.trim()) {
+            await setEditorCode(savedDraft);
+        } else if (session.last_code && session.last_code.trim()) {
+            await setEditorCode(session.last_code);
             localStorage.setItem('pymentor_draft_' + state.problemId, session.last_code);
         }
 
