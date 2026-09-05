@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -23,9 +24,14 @@ env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"
 load_dotenv(dotenv_path=env_file)
 load_dotenv()
 
-from pymentor.backend.database import get_connection, init_db, verify_password, hash_password, log_event
-from pymentor.backend.ai_mentor import evaluate_code, FALLBACK_MODELS, get_api_key
-from pymentor.backend.quota_manager import get_quota_summary
+try:
+    from pymentor.backend.database import get_connection, init_db, verify_password, hash_password, log_event
+    from pymentor.backend.ai_mentor import evaluate_code, FALLBACK_MODELS, get_api_key
+    from pymentor.backend.quota_manager import get_quota_summary
+except ImportError:
+    from backend.database import get_connection, init_db, verify_password, hash_password, log_event
+    from backend.ai_mentor import evaluate_code, FALLBACK_MODELS, get_api_key
+    from backend.quota_manager import get_quota_summary
 
 init_db()
 
