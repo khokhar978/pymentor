@@ -124,7 +124,7 @@ Login has a lockout; `/api/session/submit` — the one that actually costs an LL
 
 | # | Fix | Closes | Effort | Status |
 |---|---|---|---|---|
-| 1 | Purge `pymentor.db` from git history, force-push | C2 | Low | Open |
+| 1 | Purge `pymentor.db` from git history, force-push | C2 | Low | **DONE (Purged & Force-Pushed)** |
 | 2 | `ADMIN_SECRET` fail-closed if unset + `.env.example` | C3 | Trivial | **DONE (Batch 1)** |
 | 3 | Remove the "lean SOLVED if output matches" prompt line + reframe client data as untrusted | C1 (minimum) | Trivial | *Deferred by User* |
 | 4 | Server-side sandboxed execution as ground truth for correctness | C1 (real fix) | Medium-High | *Deferred by User* |
