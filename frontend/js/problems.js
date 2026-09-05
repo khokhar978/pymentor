@@ -4,6 +4,9 @@
  * Displays time elapsed for attempted questions and time taken for solved questions.
  */
 
+import { getCurrentStudent } from './shared/auth.js';
+import { formatDuration, escapeHtml as esc } from './shared/utils.js';
+
 let progressMap = {};       // { [problem_id]: { status, time_spent_seconds } }
 let allTopicsData = [];     // Array of topic objects
 let areAllExpanded = false; // Toggle all state
@@ -16,21 +19,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ── STUDENT AUTHENTICATION ────────────────────────
 function setupStudentUI() {
-    const saved = localStorage.getItem('pymentor_student');
-    let student = null;
-
-    if (saved) {
-        try {
-            student = JSON.parse(saved);
-        } catch (e) {
-            localStorage.removeItem('pymentor_student');
-        }
-    }
-
+    const student = getCurrentStudent();
     updateStudentDisplay(student);
 
     const handleAuthClick = () => {
-        if (localStorage.getItem('pymentor_student')) {
+        if (getCurrentStudent()) {
             window.location.href = '/profile';
         } else {
             window.location.href = '/login';
@@ -116,19 +109,15 @@ async function loadAll() {
     const container = document.getElementById('topicsContainer');
 
     // 1. Fetch student progress if authenticated
-    const saved = localStorage.getItem('pymentor_student');
-    if (saved) {
+    const student = getCurrentStudent();
+    if (student && student.token) {
         try {
-            const student = JSON.parse(saved);
-            const token = student.token;
-            if (token) {
-                const progRes = await fetch('/api/student/progress', {
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-                if (progRes.ok) {
-                    const progData = await progRes.json();
-                    progressMap = progData.progress || {};
-                }
+            const progRes = await fetch('/api/student/progress', {
+                headers: { 'Authorization': 'Bearer ' + student.token }
+            });
+            if (progRes.ok) {
+                const progData = await progRes.json();
+                progressMap = progData.progress || {};
             }
         } catch (_) {
             // Unauthenticated or network error — gracefully fallback
@@ -324,26 +313,4 @@ function getProblemStatusMeta(status) {
                 btnCls: ''
             };
     }
-}
-
-function formatDuration(seconds) {
-    if (!seconds || seconds <= 0) return '0s';
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    if (h > 0) {
-        return m > 0 ? `${h}h ${m}m` : `${h}h`;
-    }
-    if (m > 0) {
-        return s > 0 ? `${m}m ${s}s` : `${m}m`;
-    }
-    return `${s}s`;
-}
-
-function esc(str) {
-    return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
 }

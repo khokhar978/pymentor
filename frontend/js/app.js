@@ -1,3 +1,6 @@
+import { getCurrentStudent, requireAuth } from './shared/auth.js';
+import { apiFetch } from './shared/api.js';
+
 /**
  * Python Practice — Practice Page (app.js)
  * Features:
@@ -112,7 +115,7 @@ function initPyodideWorker() {
     }
 
     try {
-        pyodideWorker = new Worker('/js/pyodide-worker.js');
+        pyodideWorker = new Worker('/js/pyodide-worker.js?v=2.9');
         pyodideWorker.postMessage({
             type: 'init',
             controlBuffer,
@@ -264,7 +267,7 @@ function submitTerminalInput(inputEl) {
 // ──────────────────────────────────────────────
 async function runCode() {
     if (state.isRunning) return;
-    if (!state.student) { openModal(true); return; }
+    if (!state.student) { requireAuth(); return; }
     if (!state.sessionId) { await startSession(); }
 
     const code = state.editor ? state.editor.getValue() : '';
@@ -280,9 +283,9 @@ async function runCode() {
 
     // Auto-save to server database in background and register run click
     if (state.sessionId) {
-        fetch('/api/session/save', {
+        apiFetch('/api/session/save', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + state.student.token },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ session_id: state.sessionId, code, is_run: true })
         }).catch(err => console.warn('Background auto-save error:', err));
     }
@@ -453,21 +456,9 @@ function setupListeners() {
 // STUDENT IDENTITY
 // ──────────────────────────────────────────────
 function loadStudentIdentity() {
-    const saved = localStorage.getItem('pymentor_student');
-    if (saved) {
-        try { 
-            state.student = JSON.parse(saved); 
-            updateStudentDisplay(); 
-            return; 
-        }
-        catch (e) {
-            localStorage.removeItem('pymentor_student');
-        }
-    }
+    state.student = requireAuth();
+    if (!state.student) return;
     updateStudentDisplay();
-    // Redirect to login page preserving destination
-    const next = encodeURIComponent(window.location.pathname + window.location.search);
-    window.location.href = '/login?next=' + next;
 }
 
 function updateStudentDisplay() {
@@ -539,18 +530,15 @@ function renderProblem(p) {
 async function startSession() {
     if (!state.student || !state.problemId) return;
     try {
-        const res = await fetch('/api/session/start', {
-            method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + state.student.token },
+        const res = await apiFetch('/api/session/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 problem_id:  state.problemId,
                 help_level:  state.helpLevel
             })
         });
-        if (res.status === 403) {
-            alert('Security Requirement: Please change your default password in Profile before starting practice.');
-            window.location.href = '/profile?force_change=1';
-            return;
-        }
+        if (res.status === 403) return;
         if (!res.ok) {
             const errData = await res.json();
             throw new Error(errData.detail || 'Session start failed');
@@ -589,7 +577,7 @@ function updateAttemptDisplay() {
 // ──────────────────────────────────────────────
 async function getGuidance() {
     if (state.isGuidanceLoading) return;
-    if (!state.student) { openModal(true); return; }
+    if (!state.student) { requireAuth(); return; }
     if (!state.sessionId) { await startSession(); }
 
     const code = state.editor ? state.editor.getValue() : '';
@@ -613,8 +601,9 @@ async function getGuidance() {
     el.guidanceStatus.textContent = '...';
 
     try {
-        const res = await fetch('/api/session/submit', {
-            method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + state.student.token },
+        const res = await apiFetch('/api/session/submit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 session_id:       state.sessionId,
                 code,
@@ -711,11 +700,10 @@ async function sendHeartbeat() {
     if (Date.now() - lastUserActivityTime > 60000) return;
 
     try {
-        const res = await fetch('/api/session/heartbeat', {
+        const res = await apiFetch('/api/session/heartbeat', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer ' + state.student.token
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({ session_id: state.sessionId })
         });

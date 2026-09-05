@@ -6,20 +6,39 @@
     --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     --font-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
 
+    /* Base Surfaces */
     --bg-page: #f3f4f6;
     --bg-surface: #ffffff;
+    --bg-card: #ffffff;
+    --bg-hover: #f9fafb;
+    --bg-muted: #f3f4f6;
+    --bg-active: #f8faff;
+    --bg-code: #f3f4f6;
     --bg-terminal: #0d1117;
 
+    /* Borders */
     --border-color: #e5e7eb;
-    --border: 1px solid #e5e7eb;
+    --border-subtle: #f0f1f3;
+    --border-hover: #d1d5db;
+    --border: 1px solid var(--border-color);
 
+    /* Text */
     --text-primary: #111827;
     --text-secondary: #6b7280;
     --text-faint: #9ca3af;
+    --text-white: #ffffff;
+    --text-heading: var(--text-primary);
+    --text-body: var(--text-primary);
+    --brand: var(--accent);
+
+    /* Terminal Palette */
     --text-terminal: #c9d1d9;
     --text-terminal-error: #f85149;
     --text-terminal-ok: #56d364;
+    --text-terminal-input: #7ee787;
+    --text-terminal-muted: #4a5568;
 
+    /* Accents & Actions */
     --accent: #4f46e5;
     --accent-hover: #4338ca;
     --accent-light: #eef2ff;
@@ -28,14 +47,18 @@
     --run: #16a34a;
     --run-hover: #15803d;
 
+    /* Feedback & Status */
     --success: #059669;
     --success-bg: #ecfdf5;
     --success-border: #a7f3d0;
     --error: #dc2626;
     --error-bg: #fef2f2;
+    --error-border: #fecaca;
     --warning: #d97706;
     --warning-bg: #fffbeb;
+    --warning-border: #fde68a;
 
+    /* Difficulty Badges */
     --easy-text: #15803d;
     --easy-bg: #dcfce7;
     --medium-text: #b45309;
@@ -43,6 +66,7 @@
     --hard-text: #b91c1c;
     --hard-bg: #fee2e2;
 
+    /* Layout & Sizing */
     --header-height: 52px;
     --problem-panel-width: 390px;
     --panels-height: 260px;
@@ -52,6 +76,66 @@
     --shadow-sm: 0 1px 2px rgba(0,0,0,.05);
     --shadow: 0 1px 3px rgba(0,0,0,.10), 0 1px 2px rgba(0,0,0,.06);
     --shadow-md: 0 4px 6px rgba(0,0,0,.07), 0 2px 4px rgba(0,0,0,.06);
+}
+
+[data-theme="dark"] {
+    /* Base Surfaces */
+    --bg-page: #0b0f19;
+    --bg-surface: #111827;
+    --bg-card: #1f2937;
+    --bg-hover: #1f293d;
+    --bg-muted: #1e293b;
+    --bg-active: #1e1b4b;
+    --bg-code: #1e293b;
+    --bg-terminal: #090d16;
+
+    /* Borders */
+    --border-color: #374151;
+    --border-subtle: #1f2937;
+    --border-hover: #4b5563;
+    --border: 1px solid var(--border-color);
+
+    /* Text */
+    --text-primary: #f9fafb;
+    --text-secondary: #9ca3af;
+    --text-faint: #6b7280;
+    --text-white: #ffffff;
+    --text-heading: #f9fafb;
+    --text-body: #f9fafb;
+    --brand: var(--accent);
+
+    /* Accents & Actions */
+    --accent: #6366f1;
+    --accent-hover: #818cf8;
+    --accent-light: rgba(99, 102, 241, 0.15);
+    --accent-border: rgba(99, 102, 241, 0.35);
+
+    --run: #10b981;
+    --run-hover: #059669;
+
+    /* Feedback & Status */
+    --success: #34d399;
+    --success-bg: rgba(16, 185, 129, 0.15);
+    --success-border: rgba(16, 185, 129, 0.3);
+    --error: #f87171;
+    --error-bg: rgba(239, 68, 68, 0.15);
+    --error-border: rgba(239, 68, 68, 0.3);
+    --warning: #fbbf24;
+    --warning-bg: rgba(245, 158, 11, 0.15);
+    --warning-border: rgba(245, 158, 11, 0.3);
+
+    /* Difficulty Badges */
+    --easy-text: #4ade80;
+    --easy-bg: rgba(74, 222, 128, 0.15);
+    --medium-text: #fbbf24;
+    --medium-bg: rgba(251, 191, 36, 0.15);
+    --hard-text: #f87171;
+    --hard-bg: rgba(248, 113, 113, 0.15);
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.3);
+    --shadow: 0 2px 4px rgba(0,0,0,.4);
+    --shadow-md: 0 4px 8px rgba(0,0,0,.5);
 }
 
 /* Reset */
@@ -115,7 +199,7 @@ select, input, textarea { font-family: inherit; }
     background: var(--bg-page);
     white-space: nowrap;
 }
-.student-badge:hover { background: #f9fafb; }
+.student-badge:hover { background: var(--bg-hover); }
 .s-name { font-weight: 600; color: var(--text-primary); }
 .s-sec {
     font-size: 11px;
@@ -231,7 +315,7 @@ select, input, textarea { font-family: inherit; }
 }
 .topic-accordion:hover {
     box-shadow: var(--shadow-md);
-    border-color: #d1d5db;
+    border-color: var(--border-hover);
 }
 .topic-accordion.open {
     border-color: var(--accent-border);
@@ -249,10 +333,10 @@ select, input, textarea { font-family: inherit; }
     transition: background .15s;
 }
 .accordion-header:hover {
-    background: #fbfbfb;
+    background: var(--bg-hover);
 }
 .accordion-header.open {
-    background: #f8faff;
+    background: var(--bg-active);
     border-bottom: 1px solid var(--accent-border);
 }
 
@@ -303,7 +387,7 @@ select, input, textarea { font-family: inherit; }
     font-weight: 500;
     padding: 2px 8px;
     border-radius: 99px;
-    background: #f3f4f6;
+    background: var(--bg-muted);
     color: var(--text-secondary);
     white-space: nowrap;
 }
@@ -331,7 +415,7 @@ select, input, textarea { font-family: inherit; }
 .topic-progress-bar {
     width: 84px;
     height: 7px;
-    background: #e5e7eb;
+    background: var(--border-color);
     border-radius: 99px;
     overflow: hidden;
 }
@@ -339,10 +423,10 @@ select, input, textarea { font-family: inherit; }
     height: 100%;
     border-radius: 99px;
     transition: width .4s ease;
-    background: #d1d5db;
+    background: var(--border-hover);
 }
 .topic-progress-fill.in-progress {
-    background: #f59e0b;
+    background: var(--warning);
 }
 .topic-progress-fill.complete {
     background: var(--success);
@@ -363,12 +447,12 @@ select, input, textarea { font-family: inherit; }
 .topic-status-badge.in-progress {
     background: var(--warning-bg);
     color: var(--warning);
-    border: 1px solid #fde68a;
+    border: 1px solid var(--warning-border);
 }
 .topic-status-badge.not-started {
-    background: #f3f4f6;
+    background: var(--bg-muted);
     color: var(--text-faint);
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--border-color);
 }
 
 /* ─── ACCORDION BODY (Collapsed by default) ──── */
@@ -393,7 +477,7 @@ select, input, textarea { font-family: inherit; }
     align-items: center;
     justify-content: space-between;
     padding: 14px 20px;
-    border-bottom: 1px solid #f0f1f3;
+    border-bottom: 1px solid var(--border-subtle);
     gap: 14px;
     transition: background .12s;
 }
@@ -401,7 +485,7 @@ select, input, textarea { font-family: inherit; }
     border-bottom: none;
 }
 .problem-row:hover {
-    background: #f9fafb;
+    background: var(--bg-hover);
 }
 
 .problem-row-left {
@@ -429,14 +513,14 @@ select, input, textarea { font-family: inherit; }
     box-shadow: 0 1px 3px rgba(5, 150, 105, 0.3);
 }
 .problem-status-icon.status-attempted {
-    color: #d97706;
-    background: #fef3c7;
-    border: 2px solid #f59e0b;
+    color: var(--warning);
+    background: var(--warning-bg);
+    border: 2px solid var(--warning);
 }
 .problem-status-icon.status-not-started {
-    color: #9ca3af;
-    background: #f3f4f6;
-    border: 1.5px dashed #cbd5e1;
+    color: var(--text-faint);
+    background: var(--bg-muted);
+    border: 1.5px dashed var(--border-color);
 }
 
 .problem-row-info {
@@ -484,9 +568,9 @@ select, input, textarea { font-family: inherit; }
     border: 1px solid var(--success-border);
 }
 .problem-status-pill.status-attempted {
-    color: #b45309;
-    background: #fef3c7;
-    border: 1px solid #fde68a;
+    color: var(--warning);
+    background: var(--warning-bg);
+    border: 1px solid var(--warning-border);
 }
 .problem-status-pill.status-not-started {
     color: var(--text-faint);
@@ -504,21 +588,21 @@ select, input, textarea { font-family: inherit; }
     white-space: nowrap;
 }
 .problem-time-badge.solved {
-    background: #ecfdf5;
-    color: #047857;
-    border: 1px solid #a7f3d0;
+    background: var(--success-bg);
+    color: var(--success);
+    border: 1px solid var(--success-border);
 }
 .problem-time-badge.attempted {
-    background: #fffbeb;
-    color: #b45309;
-    border: 1px solid #fde68a;
+    background: var(--warning-bg);
+    color: var(--warning);
+    border: 1px solid var(--warning-border);
 }
 
 .topic-time-label {
     font-size: 11.5px;
     font-weight: 600;
     color: var(--text-secondary);
-    background: #f3f4f6;
+    background: var(--bg-muted);
     padding: 2px 7px;
     border-radius: 4px;
     white-space: nowrap;
@@ -529,7 +613,7 @@ select, input, textarea { font-family: inherit; }
     font-weight: 600;
     padding: 2px 8px;
     border-radius: 10px;
-    background: #f3f4f6;
+    background: var(--bg-muted);
     color: var(--text-secondary);
     border: 1px solid var(--border-color);
     white-space: nowrap;
@@ -560,7 +644,7 @@ select, input, textarea { font-family: inherit; }
     font-size: 11px;
     padding: 2px 7px;
     border-radius: 4px;
-    background: #f3f4f6;
+    background: var(--bg-muted);
     color: var(--text-secondary);
     font-family: var(--font-mono);
 }
@@ -583,11 +667,11 @@ select, input, textarea { font-family: inherit; }
 }
 .btn-practice:hover {
     background: var(--accent);
-    color: #fff;
+    color: var(--text-white);
     border-color: var(--accent);
 }
 .btn-practice.solved-btn {
-    background: white;
+    background: var(--bg-surface);
     color: var(--text-secondary);
     border-color: var(--border-color);
 }
@@ -632,7 +716,7 @@ select, input, textarea { font-family: inherit; }
     align-items: center;
     gap: 8px;
     flex-wrap: nowrap;
-    background: #f9fafb;
+    background: var(--bg-hover);
     min-width: 0;
 }
 .pp-meta .concept-tag {
@@ -677,7 +761,7 @@ select, input, textarea { font-family: inherit; }
     align-items: center;
     justify-content: space-between;
     padding: 6px 12px;
-    background: #f9fafb;
+    background: var(--bg-hover);
     border-bottom: var(--border);
     font-size: 12px;
     font-weight: 600;
@@ -700,7 +784,7 @@ select, input, textarea { font-family: inherit; }
     padding: 2px 8px;
     border: var(--border);
     border-radius: 4px;
-    background: white;
+    background: var(--bg-surface);
     color: var(--text-secondary);
     cursor: pointer;
     transition: background .15s;
@@ -741,7 +825,7 @@ select, input, textarea { font-family: inherit; }
     padding: 0 12px;
     border-top: var(--border);
     border-bottom: var(--border);
-    background: #f9fafb;
+    background: var(--bg-hover);
     flex-shrink: 0;
 }
 
@@ -750,7 +834,7 @@ select, input, textarea { font-family: inherit; }
     padding: 5px 8px;
     border: var(--border);
     border-radius: var(--radius-sm);
-    background: white;
+    background: var(--bg-surface);
     color: var(--text-primary);
     cursor: pointer;
     outline: none;
@@ -771,7 +855,7 @@ select, input, textarea { font-family: inherit; }
     padding: 7px 16px;
     border-radius: var(--radius-sm);
     background: var(--run);
-    color: #fff;
+    color: var(--text-white);
     transition: background .15s;
     white-space: nowrap;
 }
@@ -787,7 +871,7 @@ select, input, textarea { font-family: inherit; }
     padding: 7px 16px;
     border-radius: var(--radius-sm);
     background: var(--accent);
-    color: #fff;
+    color: var(--text-white);
     transition: background .15s;
     white-space: nowrap;
 }
@@ -822,7 +906,7 @@ select, input, textarea { font-family: inherit; }
     justify-content: space-between;
     padding: 5px 12px;
     border-bottom: var(--border);
-    background: #f9fafb;
+    background: var(--bg-hover);
     flex-shrink: 0;
 }
 .panel-title {
@@ -847,7 +931,7 @@ select, input, textarea { font-family: inherit; }
     word-break: break-all;
 }
 .output-body.has-error { color: var(--text-terminal-error); }
-.output-placeholder { color: #4a5568; font-style: italic; }
+.output-placeholder { color: var(--text-terminal-muted); font-style: italic; }
 
 .output-body::-webkit-scrollbar { width: 4px; }
 .output-body::-webkit-scrollbar-track { background: transparent; }
@@ -857,10 +941,10 @@ select, input, textarea { font-family: inherit; }
 .terminal-inline-input {
     display: inline-block;
     background: rgba(86, 211, 100, 0.12);
-    border: 1px solid #56d364;
+    border: 1px solid var(--text-terminal-ok);
     border-radius: 4px;
     outline: none;
-    color: #7ee787;
+    color: var(--text-terminal-input);
     font-family: var(--font-mono);
     font-size: 12.5px;
     line-height: 1.6;
@@ -868,7 +952,7 @@ select, input, textarea { font-family: inherit; }
     margin: 1px 4px;
     min-width: 160px;
     max-width: 100%;
-    caret-color: #56d364;
+    caret-color: var(--text-terminal-ok);
     vertical-align: middle;
     box-shadow: 0 0 8px rgba(86, 211, 100, 0.25);
     -webkit-appearance: none;
@@ -877,7 +961,7 @@ select, input, textarea { font-family: inherit; }
 }
 .terminal-inline-input:focus {
     outline: none;
-    border: 1px solid #7ee787;
+    border: 1px solid var(--text-terminal-input);
     background: rgba(86, 211, 100, 0.22);
     box-shadow: 0 0 12px rgba(86, 211, 100, 0.5);
 }
@@ -887,7 +971,7 @@ select, input, textarea { font-family: inherit; }
     font-size: 11.5px;
 }
 .terminal-entered {
-    color: #56d364;
+    color: var(--text-terminal-ok);
     font-weight: 500;
 }
 
@@ -913,13 +997,13 @@ select, input, textarea { font-family: inherit; }
 .guidance-body code {
     font-family: var(--font-mono);
     font-size: 12px;
-    background: #f3f4f6;
+    background: var(--bg-muted);
     padding: 1px 5px;
     border-radius: 3px;
     color: var(--accent);
 }
 .guidance-body pre {
-    background: #f3f4f6;
+    background: var(--bg-muted);
     padding: 10px 12px;
     border-radius: var(--radius-sm);
     overflow-x: auto;
@@ -1041,7 +1125,7 @@ select, input, textarea { font-family: inherit; }
     display: flex;
     align-items: center;
     gap: 8px;
-    color: #4a5568;
+    color: var(--text-secondary);
     font-style: italic;
 }
 .loading-guidance {
@@ -1066,3 +1150,29 @@ select, input, textarea { font-family: inherit; }
     margin-top: auto;
 }
 .page-footer a { color: var(--accent); }
+
+/* ─── THEME TOGGLE BUTTON ─────────────────── */
+.btn-theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 16px;
+    transition: background 0.15s, border-color 0.15s, transform 0.15s;
+    user-select: none;
+    flex-shrink: 0;
+}
+.btn-theme-toggle:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-hover);
+    transform: scale(1.05);
+}
+.btn-theme-toggle:active {
+    transform: scale(0.95);
+}

@@ -231,9 +231,10 @@ def evaluate_code(
             last_error = error_str
             continue
 
+    logger.error(f"All AI fallback models failed to evaluate submission. Last error: {last_error}")
     return {
         "is_correct": False,
-        "feedback": f"All models are currently busy. Please wait a moment and try again.\n\nDetails: {last_error}",
+        "feedback": "AI guidance is temporarily unavailable. Please wait a few moments and click **Get Guidance** again.",
         "model_used": "failed",
-        "error": str(last_error)
+        "error": "AI service temporarily unavailable"
     }

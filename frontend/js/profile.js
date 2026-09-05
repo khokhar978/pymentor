@@ -3,15 +3,13 @@
  * Displays student stats, topic mastery, and handles password changes/logout.
  */
 
-document.addEventListener('DOMContentLoaded', () => {
-    const studentData = localStorage.getItem('pymentor_student');
-    if (!studentData) {
-        window.location.href = '/login?next=/profile';
-        return;
-    }
+import { requireAuth, clearAuth } from './shared/auth.js';
+import { escapeHtml as esc, formatLocalDateTime } from './shared/utils.js';
 
-    const student = JSON.parse(studentData);
-    
+document.addEventListener('DOMContentLoaded', () => {
+    const student = requireAuth('/login');
+    if (!student) return;
+
     // Set Header UI
     document.getElementById('navNameDisplay').textContent = student.name;
     document.getElementById('navSecDisplay').textContent = 'Sec ' + student.section;
@@ -28,7 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (e) {
             console.error('Logout failed:', e);
         }
-        localStorage.removeItem('pymentor_student');
+        clearAuth();
         window.location.href = '/login';
     });
 
@@ -59,7 +57,7 @@ async function fetchProfileData(token) {
         if (!res.ok) {
             if (res.status === 401 || res.status === 403) {
                 // Token invalid or expired
-                localStorage.removeItem('pymentor_student');
+                clearAuth();
                 window.location.href = '/login?next=/profile';
                 return;
             }
@@ -70,29 +68,40 @@ async function fetchProfileData(token) {
         renderStats(data);
         renderTopicMastery(data.topic_mastery);
         renderActivity(data.activity_history);
-        
+
     } catch (err) {
         console.error('Error fetching profile:', err);
     } finally {
-        document.getElementById('loadingOverlay').style.display = 'none';
+        const overlay = document.getElementById('loadingOverlay');
+        if (overlay) overlay.style.display = 'none';
     }
 }
 
 function renderStats(data) {
-    document.getElementById('statCompleted').textContent = data.stats.completed_problems;
-    document.getElementById('statAttempts').textContent = data.stats.total_attempts;
-    document.getElementById('statSessions').textContent = data.stats.total_sessions;
-    
+    if (!data || !data.stats) return;
+    const statCompleted = document.getElementById('statCompleted');
+    const statAttempts = document.getElementById('statAttempts');
+    const statSessions = document.getElementById('statSessions');
+    const statRate = document.getElementById('statRate');
+
+    if (statCompleted) statCompleted.textContent = data.stats.completed_problems ?? 0;
+    if (statAttempts) statAttempts.textContent = data.stats.total_attempts ?? 0;
+    if (statSessions) statSessions.textContent = data.stats.total_sessions ?? 0;
+
     let rate = 0;
     if (data.stats.total_sessions > 0) {
         rate = Math.round((data.stats.completed_problems / data.stats.total_sessions) * 100);
     }
-    document.getElementById('statRate').textContent = `${rate}%`;
+    if (statRate) statRate.textContent = `${rate}%`;
 }
 
 function renderTopicMastery(mastery) {
     const container = document.getElementById('topicMasteryContainer');
-    if (!mastery || mastery.length === 0) return;
+    if (!container) return;
+    if (!mastery || mastery.length === 0) {
+        container.innerHTML = '<p style="color:var(--text-faint); font-size: 13px;">No topic data yet.</p>';
+        return;
+    }
 
     container.innerHTML = '';
     mastery.forEach(topic => {
@@ -100,7 +109,7 @@ function renderTopicMastery(mastery) {
         if (topic.total > 0) {
             percent = Math.round((topic.completed / topic.total) * 100);
         }
-        
+
         const html = `
             <div class="topic-mastery">
                 <div class="topic-mastery-header">
@@ -122,12 +131,10 @@ function renderActivity(activities) {
 
     list.innerHTML = '';
     activities.forEach(act => {
-        const dateStr = act.updated_at ? act.updated_at.replace(' ', 'T') : '';
-        const date = dateStr ? new Date(dateStr) : new Date();
-        const timeStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const timeStr = formatLocalDateTime(act.updated_at);
         const badgeClass = act.is_solved ? 'solved' : 'progress';
         const badgeText = act.is_solved ? 'Solved' : 'In Progress';
-        
+
         const html = `
             <li class="activity-item">
                 <div class="activity-info">
@@ -143,13 +150,12 @@ function renderActivity(activities) {
 
 async function handlePasswordChange(e, token) {
     e.preventDefault();
-    
+
     const currentPwd = document.getElementById('currentPwd').value;
     const newPwd = document.getElementById('newPwd').value;
     const confirmPwd = document.getElementById('confirmPwd').value;
-    const alertBox = document.getElementById('pwdAlert');
     const submitBtn = document.getElementById('pwdSubmitBtn');
-    
+
     if (newPwd !== confirmPwd) {
         showAlert('New passwords do not match.', 'error');
         return;
@@ -158,10 +164,10 @@ async function handlePasswordChange(e, token) {
         showAlert('New password must be at least 6 characters.', 'error');
         return;
     }
-    
+
     submitBtn.disabled = true;
     submitBtn.textContent = 'Updating...';
-    
+
     try {
         const res = await fetch('/api/auth/change-password', {
             method: 'POST',
@@ -174,22 +180,22 @@ async function handlePasswordChange(e, token) {
                 new_password: newPwd
             })
         });
-        
+
         if (!res.ok) {
             const data = await res.json();
             throw new Error(data.detail || 'Failed to change password.');
         }
-        
+
         showAlert('Password updated successfully! Redirecting to login...', 'success');
         document.getElementById('pwdForm').reset();
 
         // Clear stored token since backend revoked all active sessions
-        localStorage.removeItem('pymentor_student');
+        clearAuth();
 
         setTimeout(() => {
             window.location.href = '/login?msg=password_updated';
         }, 1200);
-        
+
     } catch (err) {
         showAlert(err.message, 'error');
         submitBtn.disabled = false;
@@ -201,7 +207,7 @@ function showAlert(msg, type) {
     const alertBox = document.getElementById('pwdAlert');
     alertBox.textContent = msg;
     alertBox.classList.remove('hidden');
-    
+
     if (type === 'error') {
         alertBox.style.background = 'var(--error-bg)';
         alertBox.style.color = 'var(--error)';
@@ -211,14 +217,8 @@ function showAlert(msg, type) {
         alertBox.style.color = '#10b981';
         alertBox.style.border = '1px solid rgba(16, 185, 129, 0.3)';
     }
-    
+
     setTimeout(() => {
         alertBox.classList.add('hidden');
     }, 5000);
-}
-
-function esc(str) {
-    return String(str)
-        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }

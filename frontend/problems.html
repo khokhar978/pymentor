@@ -9,8 +9,17 @@
     <link rel="alternate icon" href="/favicon.ico">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/css/style.css?v=2.5">
+    <script>
+        (function() {
+            try {
+                var s = localStorage.getItem('pymentor_theme');
+                var t = (s === 'light' || s === 'dark') ? s : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+                document.documentElement.setAttribute('data-theme', t);
+            } catch (e) {}
+        })();
+    </script>
+    <script type="module" src="/js/shared/theme.js"></script>
+    <link rel="stylesheet" href="/css/style.css?v=2.8">
 </head>
 <body>
     <header class="site-header">
@@ -20,6 +29,7 @@
             <span class="brand-sub">BCA Lab</span>
         </a>
         <div class="header-spacer"></div>
+        <button id="themeToggleBtn" class="btn-theme-toggle" onclick="window.toggleTheme()" aria-label="Toggle theme" title="Toggle theme">🌙</button>
         <div id="studentBadge" class="student-badge" title="Click to change details">
             <span>🎓</span>
             <span class="s-name" id="studentNameDisplay">Not Logged In</span>
@@ -51,6 +61,6 @@
         Python Practice Lab &mdash; <a href="https://khokhar.in.net" target="_blank">khokhar.in.net</a>
     </footer>
 
-    <script src="/js/problems.js?v=2.5"></script>
+    <script type="module" src="/js/problems.js?v=2.7"></script>
 </body>
 </html>

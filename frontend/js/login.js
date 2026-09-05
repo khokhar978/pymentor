@@ -3,22 +3,17 @@
  * Dedicated authentication page handling student login and redirects.
  */
 
+import { getCurrentStudent, saveCurrentStudent } from './shared/auth.js';
+
 document.addEventListener('DOMContentLoaded', () => {
     const params = new URLSearchParams(window.location.search);
     const nextUrl = params.get('next');
 
     // If already logged in, redirect right away
-    const existing = localStorage.getItem('pymentor_student');
-    if (existing) {
-        try {
-            const student = JSON.parse(existing);
-            if (student && student.token) {
-                redirectAfterLogin(nextUrl);
-                return;
-            }
-        } catch (e) {
-            localStorage.removeItem('pymentor_student');
-        }
+    const existing = getCurrentStudent();
+    if (existing && existing.token) {
+        redirectAfterLogin(nextUrl);
+        return;
     }
 
     const form = document.getElementById('loginForm');
@@ -67,7 +62,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             // Save authenticated student session
-            localStorage.setItem('pymentor_student', JSON.stringify(data));
+            saveCurrentStudent(data);
 
             // Redirect to target problem/practice or default problems list
             if (data.needs_password_change) {

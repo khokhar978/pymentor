@@ -101,8 +101,96 @@ builtins.input = _interactive_input
             await pyodide.runPythonAsync(msg.code);
             self.postMessage({ type: "finished", has_error: false });
         } catch (err) {
-            self.postMessage({ type: "stderr", text: (err.message || String(err)) + "\n" });
-            self.postMessage({ type: "finished", has_error: true, error: err.message || String(err) });
+            const cleanErr = formatCleanPythonError(err);
+            self.postMessage({ type: "stderr", text: cleanErr + "\n" });
+            self.postMessage({ type: "finished", has_error: true, error: cleanErr });
         }
     }
 };
+
+/**
+ * Sanitizes Pyodide / WebAssembly Python error output.
+ * Strips Pyodide internals (_base.py, CodeRunner, eval_code, pyodide.asm.js)
+ * and replaces internal <exec> markers with a clean "main.py" filename.
+ * Guarantees students only see authentic, standard Python tracebacks.
+ */
+function formatCleanPythonError(rawError) {
+    if (!rawError) return "An error occurred during execution.";
+    let text = typeof rawError === "string" ? rawError : (rawError.message || String(rawError));
+
+    // Strip leading "PythonError: " prefix
+    text = text.replace(/^PythonError:\s*/, "");
+
+    const lines = text.split(/\r?\n/);
+    const cleanedLines = [];
+    let skipUntilNextFrame = false;
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        // Retain standard traceback header
+        if (line.includes("Traceback (most recent call last):")) {
+            cleanedLines.push("Traceback (most recent call last):");
+            skipUntilNextFrame = false;
+            continue;
+        }
+
+        // Detect Python traceback stack frame: File "...", line X, in ...
+        if (/^\s*File\s+"[^"]+",\s+line\s+\d+/.test(line)) {
+            // Check if this frame is from Pyodide / Emscripten internal runners
+            if (
+                line.includes("/pyodide/") ||
+                line.includes("_base.py") ||
+                line.includes("eval_code") ||
+                line.includes("run_async") ||
+                line.includes("pyodide.asm.js")
+            ) {
+                skipUntilNextFrame = true;
+                continue;
+            } else {
+                skipUntilNextFrame = false;
+                // Replace internal <exec> or <string> with standard main.py
+                const cleanFrame = line
+                    .replace(/File\s+"<exec>"/, 'File "main.py"')
+                    .replace(/File\s+"<string>"/, 'File "main.py"');
+                cleanedLines.push(cleanFrame);
+                continue;
+            }
+        }
+
+        // If skipping an internal frame, skip its associated code / caret lines
+        if (skipUntilNextFrame) {
+            // If we hit an unindented line, it's the actual Exception line
+            if (/^\S/.test(line) && !line.startsWith("Traceback")) {
+                skipUntilNextFrame = false;
+                cleanedLines.push(line);
+            }
+            continue;
+        }
+
+        // Replace <exec> / <string> anywhere else (such as SyntaxError lines)
+        const cleanLine = line
+            .replace(/File\s+"<exec>"/, 'File "main.py"')
+            .replace(/File\s+"<string>"/, 'File "main.py"');
+
+        // Ignore internal WASM / Emscripten stack traces
+        if (
+            cleanLine.includes("at pyodide.asm.js") ||
+            cleanLine.includes("at Object.runPythonAsync") ||
+            cleanLine.includes("at Object.loadPyodide") ||
+            cleanLine.includes("at new_page") ||
+            cleanLine.includes("emscripten_")
+        ) {
+            continue;
+        }
+
+        cleanedLines.push(cleanLine);
+    }
+
+    // Trim trailing and leading blank lines
+    while (cleanedLines.length && !cleanedLines[0].trim()) cleanedLines.shift();
+    while (cleanedLines.length && !cleanedLines[cleanedLines.length - 1].trim()) cleanedLines.pop();
+
+    const result = cleanedLines.join("\n");
+    return result || text;
+}

@@ -10,7 +10,17 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/css/style.css">
+    <script>
+        (function() {
+            try {
+                var s = localStorage.getItem('pymentor_theme');
+                var t = (s === 'light' || s === 'dark') ? s : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+                document.documentElement.setAttribute('data-theme', t);
+            } catch (e) {}
+        })();
+    </script>
+    <script type="module" src="/js/shared/theme.js"></script>
+    <link rel="stylesheet" href="/css/style.css?v=2.8">
     <style>
         .login-page-wrapper {
             min-height: calc(100vh - var(--header-height) - 60px);
@@ -77,15 +87,15 @@
             font-size: 13px;
             margin-bottom: 20px;
             background: var(--error-bg);
-            border: 1px solid #fecaca;
+            border: 1px solid var(--error-border);
             color: var(--error);
             animation: shake 0.3s ease-in-out;
         }
 
         .login-alert.success {
-            background: #ecfdf5;
-            border: 1px solid #a7f3d0;
-            color: #065f46;
+            background: var(--success-bg);
+            border: 1px solid var(--success-border);
+            color: var(--success);
             animation: none;
         }
 
@@ -121,7 +131,7 @@
             border-radius: 6px;
             font-size: 14px;
             color: var(--text-primary);
-            background: #ffffff;
+            background: var(--bg-surface);
             outline: none;
             transition: border-color 0.15s ease, box-shadow 0.15s ease;
         }
@@ -136,7 +146,7 @@
             width: 100%;
             padding: 12px;
             background: var(--accent);
-            color: #ffffff;
+            color: var(--text-white);
             border: none;
             border-radius: 6px;
             font-size: 14.5px;
@@ -146,8 +156,8 @@
             align-items: center;
             justify-content: center;
             gap: 8px;
+            transition: background 0.15s ease, transform 0.05s ease;
             margin-top: 6px;
-            transition: background 0.15s ease, transform 0.05s;
         }
 
         .login-submit-btn:hover {
@@ -166,7 +176,7 @@
         .login-help-card {
             margin-top: 24px;
             padding: 14px 16px;
-            background: #f8fafc;
+            background: var(--bg-muted);
             border: 1px dashed var(--border-color);
             border-radius: 8px;
             font-size: 12.5px;
@@ -203,6 +213,7 @@
             <span class="brand-sub">BCA Lab</span>
         </a>
         <div class="header-spacer"></div>
+        <button id="themeToggleBtn" class="btn-theme-toggle" onclick="window.toggleTheme()" aria-label="Toggle theme" title="Toggle theme">🌙</button>
         <a href="/problems" class="btn-outline" style="font-size: 13px; padding: 6px 14px; border: var(--border); border-radius: 6px; text-decoration: none; color: var(--text-primary); font-weight: 500;">
             Browse Problems &rarr;
         </a>
@@ -260,6 +271,6 @@
         Python Practice Lab &mdash; <a href="https://khokhar.in.net" target="_blank">khokhar.in.net</a>
     </footer>
 
-    <script src="/js/login.js"></script>
+    <script type="module" src="/js/login.js?v=2.7"></script>
 </body>
 </html>

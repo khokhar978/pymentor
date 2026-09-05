@@ -9,7 +9,17 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/css/style.css">
+    <script>
+        (function() {
+            try {
+                var s = localStorage.getItem('pymentor_theme');
+                var t = (s === 'light' || s === 'dark') ? s : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+                document.documentElement.setAttribute('data-theme', t);
+            } catch (e) {}
+        })();
+    </script>
+    <script type="module" src="/js/shared/theme.js"></script>
+    <link rel="stylesheet" href="/css/style.css?v=2.8">
     <style>
         .profile-container {
             max-width: 1000px;
@@ -48,8 +58,8 @@
         }
         .btn-danger {
             background: transparent;
-            border: 1px solid #ef4444;
-            color: #ef4444;
+            border: 1px solid var(--error);
+            color: var(--error);
             padding: 8px 16px;
             border-radius: 6px;
             font-size: 13.5px;
@@ -58,7 +68,7 @@
             transition: all 0.2s ease;
         }
         .btn-danger:hover {
-            background: #ef4444;
+            background: var(--error);
             color: white;
         }
         .grid-2col {
@@ -235,6 +245,7 @@
             <span class="brand-sub">BCA Lab</span>
         </a>
         <div class="header-spacer"></div>
+        <button id="themeToggleBtn" class="btn-theme-toggle" onclick="window.toggleTheme()" aria-label="Toggle theme" title="Toggle theme">🌙</button>
         <div class="student-badge">
             <span>🎓</span>
             <span class="s-name" id="navNameDisplay">Student</span>
@@ -320,6 +331,6 @@
         </div>
     </div>
 
-    <script src="/js/profile.js?v=2.6"></script>
+    <script type="module" src="/js/profile.js?v=2.7"></script>
 </body>
 </html>

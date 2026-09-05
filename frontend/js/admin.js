@@ -1,3 +1,12 @@
+import {
+    escapeHtml,
+    formatDuration,
+    parseLocalDate,
+    formatLocalTime,
+    formatLocalDateTime,
+    formatLocalDateOnly
+} from './shared/utils.js';
+
 document.addEventListener('DOMContentLoaded', () => {
     const loginOverlay = document.getElementById('adminLoginOverlay');
     const dashboardContent = document.getElementById('dashboardContent');
@@ -393,39 +402,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    function formatDuration(sec) {
-        if (!sec || sec <= 0) return '0s';
-        if (sec < 60) return `${sec}s`;
-        const m = Math.floor(sec / 60);
-        const s = sec % 60;
-        if (m < 60) return `${m}m ${s > 0 ? s + 's' : ''}`.trim();
-        const h = Math.floor(m / 60);
-        const remM = m % 60;
-        return `${h}h ${remM > 0 ? remM + 'm' : ''}`.trim();
-    }
-
-    function parseLocalDate(str) {
-        if (!str) return null;
-        const s = String(str).replace(' ', 'T');
-        const d = new Date(s);
-        return isNaN(d.getTime()) ? null : d;
-    }
-
-    function formatLocalTime(str) {
-        const d = parseLocalDate(str);
-        return d ? d.toLocaleTimeString() : '-';
-    }
-
-    function formatLocalDateTime(str) {
-        const d = parseLocalDate(str);
-        return d ? d.toLocaleString() : '-';
-    }
-
-    function formatLocalDateOnly(str) {
-        const d = parseLocalDate(str);
-        return d ? d.toLocaleDateString() : '-';
-    }
-
     function renderRosterTable() {
         const query = rosterSearch.value.trim().toLowerCase();
         const section = rosterSectionFilter.value;
@@ -564,16 +540,5 @@ document.addEventListener('DOMContentLoaded', () => {
                 modalEventsBody.appendChild(tr);
             });
         }
-    }
-
-    function escapeHtml(unsafe) {
-        if (!unsafe) return "";
-        return unsafe
-             .toString()
-             .replace(/&/g, "&amp;")
-             .replace(/</g, "&lt;")
-             .replace(/>/g, "&gt;")
-             .replace(/"/g, "&quot;")
-             .replace(/'/g, "&#039;");
     }
 });

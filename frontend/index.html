@@ -20,7 +20,17 @@
     <!-- Monaco loader -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
 
-    <link rel="stylesheet" href="/css/style.css?v=2.6">
+    <script>
+        (function() {
+            try {
+                var s = localStorage.getItem('pymentor_theme');
+                var t = (s === 'light' || s === 'dark') ? s : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+                document.documentElement.setAttribute('data-theme', t);
+            } catch (e) {}
+        })();
+    </script>
+    <script type="module" src="/js/shared/theme.js"></script>
+    <link rel="stylesheet" href="/css/style.css?v=2.8">
 </head>
 <body class="practice-body">
 
@@ -30,6 +40,7 @@
         <span class="breadcrumb-sep">/</span>
         <span class="problem-title-header" id="headerProblemTitle">Loading...</span>
         <div class="header-spacer"></div>
+        <button id="themeToggleBtn" class="btn-theme-toggle" onclick="window.toggleTheme()" aria-label="Toggle theme" title="Toggle theme">🌙</button>
         <div id="studentBadge" class="student-badge" title="Click to update details">
             <span>🎓</span>
             <span class="s-name" id="studentNameDisplay">Not Logged In</span>
@@ -144,6 +155,6 @@
 
 
 
-    <script src="/js/app.js?v=2.7"></script>
+    <script type="module" src="/js/app.js?v=2.9"></script>
 </body>
 </html>
