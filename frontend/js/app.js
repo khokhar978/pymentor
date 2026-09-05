@@ -510,6 +510,7 @@ function renderProblem(p) {
     el.difficultyBadge.className   = 'difficulty-badge ' + diff;
 
     el.topicBadge.textContent = p.topic;
+    el.topicBadge.title       = p.topic || '';
 
     el.conceptsList.innerHTML = '';
     (p.concepts || []).forEach(c => {
@@ -579,8 +580,8 @@ async function startSession() {
 
 function updateAttemptDisplay() {
     const text = 'Attempt #' + (state.attemptsCount + 1);
-    el.attemptCounter.textContent = text;
-    el.attemptBadge.textContent   = text;
+    if (el.attemptCounter) el.attemptCounter.textContent = text;
+    if (el.attemptBadge)   el.attemptBadge.textContent   = text;
 }
 
 // ──────────────────────────────────────────────
@@ -628,9 +629,11 @@ async function getGuidance() {
         updateAttemptDisplay();
 
         const parsedMarkdown = marked.parse(result.feedback || '');
-        el.guidanceBody.innerHTML = (typeof DOMPurify !== 'undefined')
-            ? DOMPurify.sanitize(parsedMarkdown)
-            : parsedMarkdown;
+        if (typeof DOMPurify !== 'undefined') {
+            el.guidanceBody.innerHTML = DOMPurify.sanitize(parsedMarkdown);
+        } else {
+            el.guidanceBody.textContent = result.feedback || '';
+        }
         el.guidanceBody.scrollTop = 0;
 
         if (result.is_correct) {
