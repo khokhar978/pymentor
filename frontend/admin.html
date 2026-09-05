@@ -45,6 +45,16 @@
         .api-status-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
         .dot-green { background: #10b981; box-shadow: 0 0 10px #10b981; }
         .dot-red { background: #ef4444; box-shadow: 0 0 10px #ef4444; }
+        .pulse-dot {
+            width: 8px; height: 8px; background: #10b981; border-radius: 50%;
+            display: inline-block; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+            animation: pulseGreen 1.8s infinite;
+        }
+        @keyframes pulseGreen {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 7px rgba(16, 185, 129, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
         .api-title { font-weight: 700; color: #f1f5f9; font-size: 1rem; }
         .api-sub { font-size: 0.85rem; color: #94a3b8; font-family: 'Fira Code', monospace; margin-top: 0.2rem; }
         .api-actions { display: flex; gap: 0.75rem; align-items: center; }
@@ -249,6 +259,13 @@
                 <div class="metric-value" id="valStudents">0</div>
             </div>
             <div class="metric-card">
+                <div class="metric-title">Online Students</div>
+                <div class="metric-value" style="color: #10b981; display: flex; align-items: center; gap: 0.6rem;">
+                    <span class="pulse-dot"></span>
+                    <span id="valOnline">0</span>
+                </div>
+            </div>
+            <div class="metric-card">
                 <div class="metric-title">Code Runs Clicked</div>
                 <div class="metric-value" id="valRuns" style="color: #38bdf8;">0</div>
             </div>
@@ -289,6 +306,36 @@
                 <div class="metric-title">Disk Usage</div>
                 <div class="metric-value" id="sysDisk">0%</div>
                 <div class="bar-bg" style="margin-top:0.5rem;"><div class="bar-fill sys" id="barDisk" style="width:0%;"></div></div>
+            </div>
+        </div>
+
+        <!-- Real-Time Online Students & Ongoing Problems -->
+        <div class="panel">
+            <h3>
+                <div style="display: flex; align-items: center; gap: 0.6rem;">
+                    <span class="pulse-dot"></span>
+                    <span>Live Active Students & Ongoing Problems</span>
+                </div>
+                <span id="onlineBadgeCount" class="pill pill-ready">0 Online Now</span>
+            </h3>
+            <div class="data-table-wrapper">
+                <table class="data-table" id="onlineStudentsTable">
+                    <thead>
+                        <tr>
+                            <th>Student</th>
+                            <th>Section</th>
+                            <th>Roll No</th>
+                            <th>Current Problem Being Solved</th>
+                            <th>Active Practice Time</th>
+                            <th>Runs</th>
+                            <th>Last Heartbeat</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="onlineStudentsBody">
+                        <!-- Populated via JS -->
+                    </tbody>
+                </table>
             </div>
         </div>
 
@@ -431,6 +478,6 @@
         </div>
     </div>
 
-    <script src="/js/admin.js"></script>
+    <script src="/js/admin.js?v=2.7"></script>
 </body>
 </html>

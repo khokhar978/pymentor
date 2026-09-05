@@ -42,8 +42,8 @@ def log_event(student_id=None, session_id=None, problem_id=None, event_type: str
         cursor = conn.cursor()
         data_str = json.dumps(event_data or {})
         cursor.execute("""
-        INSERT INTO events (student_id, session_id, problem_id, event_type, event_data)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO events (student_id, session_id, problem_id, event_type, event_data, created_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime'))
         """, (student_id, session_id, problem_id, event_type, data_str))
         conn.commit()
         conn.close()
@@ -77,7 +77,7 @@ def init_db():
         section TEXT NOT NULL,
         password TEXT NOT NULL DEFAULT '123',
         needs_password_change INTEGER DEFAULT 1,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT (datetime('now', 'localtime')),
         UNIQUE(roll_no, section)
     );
     """)
@@ -95,8 +95,8 @@ def init_db():
         help_level INTEGER DEFAULT 1,
         status TEXT DEFAULT 'in_progress',
         last_code TEXT DEFAULT '',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT (datetime('now', 'localtime')),
+        updated_at TIMESTAMP DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (student_id) REFERENCES students(id),
         FOREIGN KEY (problem_id) REFERENCES problems(id)
     );
@@ -134,7 +134,7 @@ def init_db():
         attempt_number INTEGER DEFAULT 1,
         model_used TEXT DEFAULT '',
         simulated_output TEXT DEFAULT '',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (session_id) REFERENCES sessions(id)
     );
     """)
@@ -153,7 +153,7 @@ def init_db():
         problem_id INTEGER,
         event_type TEXT NOT NULL,
         event_data TEXT DEFAULT '{}',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (student_id) REFERENCES students(id),
         FOREIGN KEY (session_id) REFERENCES sessions(id),
         FOREIGN KEY (problem_id) REFERENCES problems(id)
@@ -165,7 +165,7 @@ def init_db():
         token TEXT PRIMARY KEY,
         student_id INTEGER NOT NULL,
         expires_at TIMESTAMP,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (student_id) REFERENCES students(id)
     );
     """)

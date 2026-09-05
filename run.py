@@ -51,4 +51,11 @@ if __name__ == "__main__":
     except ImportError:
         from backend.main import app
 
+    import logging
+    class AdminHeartbeatFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            return "/api/admin/dashboard" not in record.getMessage()
+
+    logging.getLogger("uvicorn.access").addFilter(AdminHeartbeatFilter())
+
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=False, use_colors=False)

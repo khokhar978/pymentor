@@ -61,9 +61,20 @@ app.add_middleware(
 request_times = deque(maxlen=5000)
 
 @app.middleware("http")
-async def track_requests(request: Request, call_next):
+async def track_requests_and_add_headers(request: Request, call_next):
     request_times.append(time.time())
     response = await call_next(request)
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    
+    # Safari (macOS / iOS) does not support 'credentialless' and requires 'require-corp'
+    # to enable cross-origin isolation and SharedArrayBuffer for interactive input().
+    # Chromium and Firefox fully support 'credentialless'.
+    ua = request.headers.get("user-agent", "")
+    is_safari = "Safari" in ua and not any(b in ua for b in ["Chrome", "Chromium", "Edg", "Firefox", "OPR"])
+    if is_safari:
+        response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+    else:
+        response.headers["Cross-Origin-Embedder-Policy"] = "credentialless"
     return response
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
@@ -78,6 +89,13 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("pymentor")
+
+# Mute repetitive admin heartbeat polling from access logs
+class AdminHeartbeatFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "/api/admin/dashboard" not in record.getMessage()
+
+logging.getLogger("uvicorn.access").addFilter(AdminHeartbeatFilter())
 
 ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "").strip()
 if not ADMIN_SECRET or ADMIN_SECRET == "default-admin-secret-change-me":
@@ -109,13 +127,13 @@ def get_current_student(request: Request):
     # Opportunistic pruning of expired auth tokens
     if int(time.time()) % 15 == 0:
         try:
-            cursor.execute("DELETE FROM auth_tokens WHERE expires_at IS NOT NULL AND expires_at < datetime('now')")
+            cursor.execute("DELETE FROM auth_tokens WHERE expires_at IS NOT NULL AND expires_at < datetime('now', 'localtime')")
             conn.commit()
         except Exception:
             pass
 
     cursor.execute(
-        "SELECT student_id FROM auth_tokens WHERE token = ? AND (expires_at IS NULL OR expires_at > datetime('now'))",
+        "SELECT student_id FROM auth_tokens WHERE token = ? AND (expires_at IS NULL OR expires_at > datetime('now', 'localtime'))",
         (token,)
     )
     row = cursor.fetchone()
@@ -197,6 +215,7 @@ class SessionSaveRequest(BaseModel):
     session_id: int
     code: str = Field(..., max_length=20000)
     time_spent_seconds: Optional[int] = None
+    is_run: Optional[bool] = True
 
 class SubmitCodeRequest(BaseModel):
     session_id: int
@@ -413,6 +432,7 @@ def login_student(req: LoginRequest):
         fails = login_attempts.get(rate_key, (0, 0))[0] + 1
         lock = now + 300 if fails >= 5 else 0 # 5 minutes lockout after 5 attempts
         login_attempts[rate_key] = (fails, lock)
+        logger.warning(f"[STUDENT AUTH] Login FAILED: Sec '{section}', Roll '{roll_no}' from IP={client_ip} (Attempt {fails}/5)")
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     # Success, reset failures
@@ -421,7 +441,7 @@ def login_student(req: LoginRequest):
 
     # Generate token with expiry (+7 days)
     token = secrets.token_hex(32)
-    expires = (datetime.utcnow() + timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+    expires = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
     cursor.execute("INSERT INTO auth_tokens (token, student_id, expires_at) VALUES (?, ?, ?)", (token, student["id"], expires))
     conn.commit()
     
@@ -429,6 +449,7 @@ def login_student(req: LoginRequest):
     conn.close()
 
     log_event(student_id=student["id"], event_type="login", event_data={"section": section, "roll_no": roll_no})
+    logger.info(f"[STUDENT AUTH] Login SUCCESS: '{student['name']}' (Sec {section}, Roll {roll_no}) from IP={client_ip}")
 
     return {
         "student_id": student["id"],
@@ -452,6 +473,7 @@ def logout(request: Request):
             row = cursor.fetchone()
             if row:
                 log_event(student_id=row["student_id"], event_type="logout")
+                logger.info(f"[STUDENT AUTH] Logout: Student ID={row['student_id']}")
             conn.execute("DELETE FROM auth_tokens WHERE token = ?", (token,))
             conn.commit()
             conn.close()
@@ -479,6 +501,7 @@ def change_password(req: ChangePasswordRequest, student_id: int = Depends(get_cu
     conn.close()
 
     log_event(student_id=student_id, event_type="password_change")
+    logger.info(f"[STUDENT AUTH] Password changed for Student ID={student_id}")
 
     return {"message": "Password updated successfully. All sessions revoked. Please log in with your new password."}
 
@@ -498,13 +521,13 @@ def start_session(req: SessionStartRequest, student_id: int = Depends(require_pa
     if session:
         session_id = session["id"]
         cursor.execute("""
-        UPDATE sessions SET help_level = ?, last_heartbeat_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+        UPDATE sessions SET help_level = ?, last_heartbeat_at = datetime('now', 'localtime'), updated_at = datetime('now', 'localtime') WHERE id = ?
         """, (req.help_level, session_id))
         conn.commit()
     else:
         cursor.execute("""
         INSERT INTO sessions (student_id, problem_id, help_level, last_heartbeat_at)
-        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, datetime('now', 'localtime'))
         """, (student_id, req.problem_id, req.help_level))
         conn.commit()
         session_id = cursor.lastrowid
@@ -532,6 +555,7 @@ def start_session(req: SessionStartRequest, student_id: int = Depends(require_pa
         event_type="session_start",
         event_data={"help_level": req.help_level}
     )
+    logger.info(f"[STUDENT SESSION] Started: Student ID={student_id} opened Problem ID={req.problem_id} (Session #{session_id}, Help L{req.help_level})")
 
     is_solved = any(s["is_correct"] == 1 for s in submissions)
 
@@ -549,20 +573,39 @@ def start_session(req: SessionStartRequest, student_id: int = Depends(require_pa
 def save_session(req: SessionSaveRequest, student_id: int = Depends(require_password_changed)):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM sessions WHERE id = ? AND student_id = ?", (req.session_id, student_id))
-    if not cursor.fetchone():
+    cursor.execute("SELECT id, problem_id FROM sessions WHERE id = ? AND student_id = ?", (req.session_id, student_id))
+    session = cursor.fetchone()
+    if not session:
         conn.close()
         raise HTTPException(status_code=404, detail="Session not found")
         
+    updates = ["last_code = ?", "updated_at = datetime('now', 'localtime')"]
+    params = [req.code]
+
+    if req.is_run:
+        updates.append("run_count = COALESCE(run_count, 0) + 1")
+
     if req.time_spent_seconds is not None:
-        cursor.execute("""
-        UPDATE sessions 
-        SET last_code = ?, time_spent_seconds = COALESCE(time_spent_seconds, 0) + ?, updated_at = CURRENT_TIMESTAMP 
-        WHERE id = ?
-        """, (req.code, req.time_spent_seconds, req.session_id))
-    else:
-        cursor.execute("UPDATE sessions SET last_code = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (req.code, req.session_id))
+        updates.append("time_spent_seconds = COALESCE(time_spent_seconds, 0) + ?")
+        params.append(req.time_spent_seconds)
+
+    params.append(req.session_id)
+
+    query = f"UPDATE sessions SET {', '.join(updates)} WHERE id = ?"
+    cursor.execute(query, tuple(params))
     conn.commit()
+
+    # Log code run event for student telemetry if this was a run action
+    if req.is_run:
+        log_event(
+            student_id=student_id,
+            session_id=req.session_id,
+            problem_id=session["problem_id"],
+            event_type="code_run",
+            event_data={"code_len": len(req.code)}
+        )
+        logger.info(f"[STUDENT RUN] Executed: Student ID={student_id} ran code for Session #{req.session_id} (Problem ID={session['problem_id']}, length: {len(req.code)} chars)")
+
     conn.close()
     return {"message": "Saved"}
 
@@ -585,7 +628,7 @@ def session_heartbeat(req: HeartbeatRequest, student_id: int = Depends(require_p
         conn.close()
         raise HTTPException(status_code=404, detail="Session not found")
 
-    now = datetime.utcnow()
+    now = datetime.now()
     now_str = now.strftime('%Y-%m-%d %H:%M:%S')
     last_hb_str = session["last_heartbeat_at"]
     credited_seconds = 0
@@ -616,7 +659,7 @@ def session_heartbeat(req: HeartbeatRequest, student_id: int = Depends(require_p
         UPDATE sessions 
         SET time_spent_seconds = COALESCE(time_spent_seconds, 0) + ?,
             last_heartbeat_at = ?,
-            updated_at = CURRENT_TIMESTAMP
+            updated_at = datetime('now', 'localtime')
         WHERE id = ?
         """, (credited_seconds, now_str, req.session_id))
     else:
@@ -624,7 +667,7 @@ def session_heartbeat(req: HeartbeatRequest, student_id: int = Depends(require_p
         cursor.execute("""
         UPDATE sessions 
         SET last_heartbeat_at = ?,
-            updated_at = CURRENT_TIMESTAMP
+            updated_at = datetime('now', 'localtime')
         WHERE id = ?
         """, (now_str, req.session_id))
 
@@ -715,14 +758,14 @@ def submit_code(req: SubmitCodeRequest, student_id: int = Depends(require_passwo
     model_used = eval_result.get("model_used", "")
 
     cursor.execute("""
-    INSERT INTO submissions (session_id, code, ai_response, is_correct, attempt_number, model_used, simulated_output)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO submissions (session_id, code, ai_response, is_correct, attempt_number, model_used, simulated_output, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
     """, (req.session_id, code, feedback, is_correct, attempt_number, model_used, req.simulated_output or ""))
 
     if is_correct:
-        cursor.execute("UPDATE sessions SET status = 'solved', last_code = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (code, req.session_id,))
+        cursor.execute("UPDATE sessions SET status = 'solved', last_code = ?, updated_at = datetime('now', 'localtime') WHERE id = ?", (code, req.session_id,))
     else:
-        cursor.execute("UPDATE sessions SET last_code = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (code, req.session_id,))
+        cursor.execute("UPDATE sessions SET last_code = ?, updated_at = datetime('now', 'localtime') WHERE id = ?", (code, req.session_id,))
 
     conn.commit()
 
@@ -908,6 +951,47 @@ def get_admin_dashboard(admin: bool = Depends(verify_admin)):
     """)
     students_roster = [dict(row) for row in cursor.fetchall()]
 
+    # Real-Time Online Students (active heartbeat within last 120 seconds)
+    cursor.execute("""
+        SELECT 
+            st.id as student_id,
+            st.name as student_name,
+            st.roll_no,
+            st.section,
+            p.id as problem_id,
+            p.title as problem_title,
+            p.topic as problem_topic,
+            p.difficulty,
+            s.id as session_id,
+            s.status,
+            s.run_count,
+            s.time_spent_seconds,
+            s.last_heartbeat_at,
+            CAST(MAX(0, ROUND((julianday('now', 'localtime') - julianday(s.last_heartbeat_at)) * 86400)) AS INTEGER) as seconds_ago
+        FROM sessions s
+        JOIN students st ON s.student_id = st.id
+        JOIN problems p ON s.problem_id = p.id
+        WHERE s.last_heartbeat_at >= datetime('now', 'localtime', '-120 seconds')
+          AND s.id = (
+              SELECT s2.id FROM sessions s2
+              WHERE s2.student_id = s.student_id
+              ORDER BY s2.last_heartbeat_at DESC LIMIT 1
+          )
+        ORDER BY s.last_heartbeat_at DESC
+    """)
+    online_students = [dict(row) for row in cursor.fetchall()]
+    online_map = {s["student_id"]: s for s in online_students}
+
+    # Annotate students roster with online status and active problem
+    for st_row in students_roster:
+        sid = st_row["id"]
+        if sid in online_map:
+            st_row["is_online"] = True
+            st_row["current_problem"] = online_map[sid]["problem_title"]
+        else:
+            st_row["is_online"] = False
+            st_row["current_problem"] = None
+
     conn.close()
 
     # System Metrics via psutil
@@ -937,6 +1021,7 @@ def get_admin_dashboard(admin: bool = Depends(verify_admin)):
     return {
         "metrics": {
             "total_students": total_students,
+            "total_online": len(online_students),
             "total_submissions": total_submissions,
             "total_solved": total_solved,
             "total_runs": total_runs
@@ -946,6 +1031,7 @@ def get_admin_dashboard(admin: bool = Depends(verify_admin)):
             "masked_key": masked_key
         },
         "model_quotas": model_quotas,
+        "online_students": online_students,
         "students_roster": students_roster,
         "toughest_problems": toughest_problems,
         "guidance_usage": guidance_usage,

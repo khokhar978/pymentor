@@ -122,7 +122,8 @@ function renderActivity(activities) {
 
     list.innerHTML = '';
     activities.forEach(act => {
-        const date = new Date(act.updated_at);
+        const dateStr = act.updated_at ? act.updated_at.replace(' ', 'T') : '';
+        const date = dateStr ? new Date(dateStr) : new Date();
         const timeStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         const badgeClass = act.is_solved ? 'solved' : 'progress';
         const badgeText = act.is_solved ? 'Solved' : 'In Progress';

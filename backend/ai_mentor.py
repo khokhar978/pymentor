@@ -32,7 +32,6 @@ except ImportError:
 FALLBACK_MODELS = [cfg["model"] for cfg in MODEL_CONFIGS]
 
 logger = logging.getLogger("pymentor.ai")
-logging.basicConfig(level=logging.INFO)
 
 def get_api_key() -> str:
     return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or ""

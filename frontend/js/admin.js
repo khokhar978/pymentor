@@ -204,6 +204,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Platform Metrics
         document.getElementById('valStudents').textContent = data.metrics.total_students || 0;
+        const onlineCount = data.metrics.total_online || (data.online_students ? data.online_students.length : 0);
+        const valOnlineEl = document.getElementById('valOnline');
+        if (valOnlineEl) valOnlineEl.textContent = onlineCount;
+
         document.getElementById('valRuns').textContent = data.metrics.total_runs || 0;
         document.getElementById('valSubmissions').textContent = data.metrics.total_submissions || 0;
         document.getElementById('valSolved').textContent = data.metrics.total_solved || 0;
@@ -213,6 +217,9 @@ document.addEventListener('DOMContentLoaded', () => {
             rate = Math.round((data.metrics.total_solved / data.metrics.total_submissions) * 100);
         }
         document.getElementById('valRate').textContent = rate + '%';
+
+        // Real-Time Online Students Table
+        renderOnlineStudents(data.online_students || []);
 
         // System Metrics
         const sys = data.system_metrics || {};
@@ -281,7 +288,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const feedContainer = document.getElementById('liveFeed');
         feedContainer.innerHTML = '';
         (data.recent_activity || []).forEach(a => {
-            const time = new Date(a.created_at).toLocaleTimeString();
+            const time = formatLocalTime(a.created_at);
             const badgeClass = a.is_correct ? 'badge-success' : 'badge-fail';
             const badgeText = a.is_correct ? 'PASSED' : 'FAILED';
             const levelText = a.help_level > 1 ? ` (Help L${a.help_level})` : '';
@@ -336,6 +343,56 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    function renderOnlineStudents(list) {
+        const tbody = document.getElementById('onlineStudentsBody');
+        const badgeCount = document.getElementById('onlineBadgeCount');
+        if (!tbody) return;
+
+        if (badgeCount) {
+            badgeCount.textContent = `${list.length} Online Now`;
+            badgeCount.className = list.length > 0 ? 'pill pill-ready' : 'pill';
+        }
+
+        tbody.innerHTML = '';
+        if (!list || list.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: #64748b; padding: 2rem;">No students are currently in active practice sessions.</td></tr>`;
+            return;
+        }
+
+        list.forEach(s => {
+            const secAgo = s.seconds_ago !== undefined && s.seconds_ago !== null ? s.seconds_ago : 0;
+            const seenText = secAgo <= 15 ? 'Active just now' : `${secAgo}s ago`;
+            const duration = formatDuration(s.time_spent_seconds || 0);
+
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td style="font-weight: 600; color: #f1f5f9;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <span class="pulse-dot"></span>
+                        <span>${escapeHtml(s.student_name)}</span>
+                    </div>
+                </td>
+                <td><span class="pill" style="background: rgba(148, 163, 184, 0.15); color: #cbd5e1;">Sec ${escapeHtml(s.section)}</span></td>
+                <td style="font-family: 'Fira Code', monospace;">${escapeHtml(s.roll_no)}</td>
+                <td>
+                    <span class="pill" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-weight: 600;">
+                        ${escapeHtml(s.problem_title)}
+                    </span>
+                    <span style="font-size: 0.78rem; color: #94a3b8; margin-left: 0.4rem;">(${escapeHtml(s.problem_topic)})</span>
+                </td>
+                <td style="color: #38bdf8; font-family: 'Fira Code', monospace; font-weight: 600;">⏱ ${duration}</td>
+                <td style="color: #38bdf8; font-weight: 700;">${s.run_count || 0}</td>
+                <td style="font-size: 0.8rem; color: #10b981; font-weight: 600;">${seenText}</td>
+                <td>
+                    <button class="btn-action btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.78rem;" onclick="window.inspectStudent(${s.student_id})">
+                        Inspect
+                    </button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
     function formatDuration(sec) {
         if (!sec || sec <= 0) return '0s';
         if (sec < 60) return `${sec}s`;
@@ -345,6 +402,28 @@ document.addEventListener('DOMContentLoaded', () => {
         const h = Math.floor(m / 60);
         const remM = m % 60;
         return `${h}h ${remM > 0 ? remM + 'm' : ''}`.trim();
+    }
+
+    function parseLocalDate(str) {
+        if (!str) return null;
+        const s = String(str).replace(' ', 'T');
+        const d = new Date(s);
+        return isNaN(d.getTime()) ? null : d;
+    }
+
+    function formatLocalTime(str) {
+        const d = parseLocalDate(str);
+        return d ? d.toLocaleTimeString() : '-';
+    }
+
+    function formatLocalDateTime(str) {
+        const d = parseLocalDate(str);
+        return d ? d.toLocaleString() : '-';
+    }
+
+    function formatLocalDateOnly(str) {
+        const d = parseLocalDate(str);
+        return d ? d.toLocaleDateString() : '-';
     }
 
     function renderRosterTable() {
@@ -366,10 +445,24 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         filtered.forEach(s => {
-            const lastActiveTime = s.last_active ? new Date(s.last_active).toLocaleString() : 'Never';
+            const lastActiveTime = s.last_active ? formatLocalDateTime(s.last_active) : 'Never';
+            const statusBadge = s.is_online
+                ? `<span class="pill" style="background: rgba(16, 185, 129, 0.2); color: #10b981; font-size: 0.72rem; padding: 2px 7px; margin-left: 6px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px;"><span class="pulse-dot" style="width:6px; height:6px;"></span>Online</span>`
+                : `<span class="pill" style="background: rgba(148, 163, 184, 0.08); color: #64748b; font-size: 0.72rem; padding: 2px 7px; margin-left: 6px;">Offline</span>`;
+            
+            const currentProblemHtml = s.is_online && s.current_problem
+                ? `<div style="font-size: 0.75rem; color: #38bdf8; margin-top: 3px; font-weight: 500;">Solving: ${escapeHtml(s.current_problem)}</div>`
+                : '';
+
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td style="font-weight: 600; color: #f1f5f9;">${escapeHtml(s.name)}</td>
+                <td style="font-weight: 600; color: #f1f5f9;">
+                    <div style="display: flex; align-items: center;">
+                        <span>${escapeHtml(s.name)}</span>
+                        ${statusBadge}
+                    </div>
+                    ${currentProblemHtml}
+                </td>
                 <td><span class="pill" style="background: rgba(148, 163, 184, 0.15); color: #cbd5e1;">Sec ${escapeHtml(s.section)}</span></td>
                 <td style="font-family: 'Fira Code', monospace;">${escapeHtml(s.roll_no)}</td>
                 <td style="font-weight: 600;">${s.problems_attempted}</td>
@@ -418,7 +511,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderStudentModal(data) {
         const st = data.student;
         modalStudentName.textContent = `${st.name}`;
-        modalStudentMeta.textContent = `Section ${st.section} | Roll No: ${st.roll_no} | Registered: ${new Date(st.created_at).toLocaleDateString()}`;
+        modalStudentMeta.textContent = `Section ${st.section} | Roll No: ${st.roll_no} | Registered: ${formatLocalDateOnly(st.created_at)}`;
 
         // Problems breakdown
         modalProblemsBody.innerHTML = '';
@@ -430,7 +523,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const badge = isSolved 
                     ? `<span class="pill pill-ready">Solved</span>` 
                     : `<span class="pill pill-cooling">In Progress</span>`;
-                const updated = p.updated_at ? new Date(p.updated_at).toLocaleString() : '-';
+                const updated = p.updated_at ? formatLocalDateTime(p.updated_at) : '-';
 
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
@@ -466,7 +559,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 tr.innerHTML = `
                     <td>${evBadge}</td>
                     <td style="font-size: 0.85rem; font-family: 'Fira Code', monospace; color: #cbd5e1;">${escapeHtml(metaText)}</td>
-                    <td style="font-size: 0.8rem; color: #94a3b8;">${new Date(ev.created_at).toLocaleTimeString()}</td>
+                    <td style="font-size: 0.8rem; color: #94a3b8;">${formatLocalTime(ev.created_at)}</td>
                 `;
                 modalEventsBody.appendChild(tr);
             });

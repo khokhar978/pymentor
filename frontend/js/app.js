@@ -197,6 +197,7 @@ function promptForTerminalInput(promptText) {
     const inputEl = document.createElement('input');
     inputEl.type = 'text';
     inputEl.className = 'terminal-inline-input';
+    inputEl.placeholder = 'Type here & press Enter ↵';
     inputEl.autocomplete = 'off';
     inputEl.spellcheck = false;
 
@@ -204,9 +205,12 @@ function promptForTerminalInput(promptText) {
     activeInputEl = inputEl;
 
     // Auto-adjust width as user types
-    inputEl.addEventListener('input', () => {
-        inputEl.style.width = Math.max(80, (inputEl.value.length + 1) * 8.5) + 'px';
-    });
+    function adjustWidth() {
+        const textLen = Math.max((inputEl.value || '').length + 1, (inputEl.placeholder || '').length);
+        inputEl.style.width = Math.max(170, textLen * 8.5) + 'px';
+    }
+    adjustWidth();
+    inputEl.addEventListener('input', adjustWidth);
 
     // Handle Enter to submit input
     inputEl.addEventListener('keydown', (e) => {
@@ -216,11 +220,16 @@ function promptForTerminalInput(promptText) {
         }
     });
 
-    // Immediate focus with slight delay to ensure DOM attachment
+    // Multi-tier focus to maximize compatibility across Safari, Chrome, and Firefox
+    inputEl.focus();
+    requestAnimationFrame(() => {
+        inputEl.focus();
+        el.outputBody.scrollTop = el.outputBody.scrollHeight;
+    });
     setTimeout(() => {
         inputEl.focus();
         el.outputBody.scrollTop = el.outputBody.scrollHeight;
-    }, 10);
+    }, 20);
 }
 
 function submitTerminalInput(inputEl) {
@@ -269,12 +278,12 @@ async function runCode() {
         localStorage.setItem('pymentor_draft_' + state.problemId, code);
     }
 
-    // Auto-save to server database in background
+    // Auto-save to server database in background and register run click
     if (state.sessionId) {
         fetch('/api/session/save', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + state.student.token },
-            body: JSON.stringify({ session_id: state.sessionId, code })
+            body: JSON.stringify({ session_id: state.sessionId, code, is_run: true })
         }).catch(err => console.warn('Background auto-save error:', err));
     }
 
@@ -409,8 +418,32 @@ function setupListeners() {
     });
 
     // Clicking anywhere in the terminal re-focuses active inline input
-    el.outputBody.addEventListener('click', () => {
-        if (activeInputEl) {
+    el.outputBody.addEventListener('click', (e) => {
+        if (activeInputEl && e.target !== activeInputEl) {
+            const sel = window.getSelection();
+            if (!sel || sel.isCollapsed || sel.toString().length === 0) {
+                activeInputEl.focus();
+            }
+        }
+    });
+
+    // Prevent accidental text drag-selection from stealing input focus
+    el.outputBody.addEventListener('mousedown', (e) => {
+        if (activeInputEl && e.target !== activeInputEl) {
+            setTimeout(() => {
+                if (activeInputEl) activeInputEl.focus();
+            }, 0);
+        }
+    });
+
+    // Keystroke forwarding: typing while terminal awaits input automatically routes to input box
+    document.addEventListener('keydown', (e) => {
+        if (!activeInputEl || document.activeElement === activeInputEl) return;
+        const tag = (document.activeElement && document.activeElement.tagName) || '';
+        if (tag === 'TEXTAREA' || (tag === 'INPUT' && document.activeElement !== activeInputEl)) {
+            return; // Don't interrupt editor or dialog inputs
+        }
+        if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Enter') {
             activeInputEl.focus();
         }
     });
