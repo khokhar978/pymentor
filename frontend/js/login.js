@@ -31,6 +31,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const alertEl = document.getElementById('loginAlert');
     const alertMsg = document.getElementById('alertMessage');
 
+    const msg = params.get('msg');
+    if (msg === 'password_updated') {
+        showSuccess('Password updated successfully! Please log in with your new password.');
+    }
+
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
 
@@ -80,12 +85,20 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function showError(msg) {
+        alertEl.classList.remove('success');
+        alertMsg.textContent = msg;
+        alertEl.classList.remove('hidden');
+    }
+
+    function showSuccess(msg) {
+        alertEl.classList.add('success');
         alertMsg.textContent = msg;
         alertEl.classList.remove('hidden');
     }
 
     function hideError() {
         alertEl.classList.add('hidden');
+        alertEl.classList.remove('success');
         alertMsg.textContent = '';
     }
 

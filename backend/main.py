@@ -12,25 +12,43 @@ import psutil
 from collections import deque
 from datetime import datetime, timedelta
 from typing import Optional, List
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+# Load environment variables
+env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
+load_dotenv(dotenv_path=env_file)
+load_dotenv()
 
 from pymentor.backend.database import get_connection, init_db, verify_password, hash_password, log_event
-from pymentor.backend.ai_mentor import evaluate_code, simulate_run, FALLBACK_MODELS, get_api_key
+from pymentor.backend.ai_mentor import evaluate_code, FALLBACK_MODELS, get_api_key
 from pymentor.backend.quota_manager import get_quota_summary
 
 init_db()
 
 app = FastAPI(title="Python Practice API", version="2.0.0", docs_url=None, redoc_url=None, openapi_url=None)
 
+# Configure CORS - Restrict methods, headers, and origins
+raw_origins = os.environ.get("ALLOWED_ORIGINS", "").strip()
+if raw_origins:
+    allowed_origins = [o.strip() for o in raw_origins.split(",") if o.strip()]
+else:
+    allowed_origins = [
+        "http://localhost",
+        "http://localhost:8000",
+        "http://127.0.0.1",
+        "http://127.0.0.1:8000",
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=allowed_origins,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|.*\.trycloudflare\.com|.*\.ngrok-free\.app|.*\.loca\.lt)(:\d+)?$",
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Admin-Secret"],
 )
 
 # Global request tracker
@@ -55,10 +73,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger("pymentor")
 
-ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "default-admin-secret-change-me")
+ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "").strip()
+if not ADMIN_SECRET or ADMIN_SECRET == "default-admin-secret-change-me":
+    logger.critical("CRITICAL: ADMIN_SECRET is not configured or still set to default placeholder in .env. Application refusing to start to prevent unauthenticated admin takeover.")
+    raise SystemExit("CRITICAL: ADMIN_SECRET must be set in .env to a non-default secret phrase. Application refusing to start.")
 
-# Rate limiting dictionary: (roll_no, section) -> (failed_attempts, locked_until)
-login_attempts = {}
+# Rate limiting & cooldown dictionaries
+login_attempts = {}    # (roll_no, section) -> (failed_attempts, locked_until)
+admin_attempts = {}    # client_ip -> (failed_attempts, locked_until)
+submit_cooldowns = {}  # student_id -> last_submit_timestamp
+SUBMIT_COOLDOWN_SECONDS = 3.0
 
 
 # ─────────────────────────────────────────────
@@ -75,6 +99,15 @@ def get_current_student(request: Request):
     
     conn = get_connection()
     cursor = conn.cursor()
+
+    # Opportunistic pruning of expired auth tokens
+    if int(time.time()) % 15 == 0:
+        try:
+            cursor.execute("DELETE FROM auth_tokens WHERE expires_at IS NOT NULL AND expires_at < datetime('now')")
+            conn.commit()
+        except Exception:
+            pass
+
     cursor.execute(
         "SELECT student_id FROM auth_tokens WHERE token = ? AND (expires_at IS NULL OR expires_at > datetime('now'))",
         (token,)
@@ -86,10 +119,55 @@ def get_current_student(request: Request):
         raise HTTPException(status_code=401, detail="Invalid or expired session token")
     return row["student_id"]
 
+def require_password_changed(student_id: int = Depends(get_current_student)):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT needs_password_change, password FROM students WHERE id = ?", (student_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=401, detail="Student not found")
+    
+    needs_change = bool(row["needs_password_change"]) if ("needs_password_change" in row.keys() and row["needs_password_change"] is not None) else verify_password("123", row["password"])
+    if needs_change:
+        raise HTTPException(
+            status_code=403,
+            detail="Security notice: Please change your default password in Profile before practicing."
+        )
+    return student_id
+
 def verify_admin(request: Request):
-    secret = request.headers.get("X-Admin-Secret")
-    if secret != ADMIN_SECRET:
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.time()
+
+    # Periodic cleanup of expired lockout entries
+    if len(admin_attempts) > 50:
+        for ip in list(admin_attempts.keys()):
+            if admin_attempts[ip][1] <= now:
+                del admin_attempts[ip]
+
+    if client_ip in admin_attempts:
+        failures, locked_until = admin_attempts[client_ip]
+        if now < locked_until:
+            wait_seconds = int(locked_until - now)
+            raise HTTPException(
+                status_code=429,
+                detail=f"Too many failed admin attempts. Locked out for {wait_seconds}s."
+            )
+        elif now >= locked_until and locked_until > 0:
+            admin_attempts[client_ip] = (0, 0)
+
+    secret = request.headers.get("X-Admin-Secret", "")
+    if not secret or not secrets.compare_digest(secret, ADMIN_SECRET):
+        fails = admin_attempts.get(client_ip, (0, 0))[0] + 1
+        lock = now + 900 if fails >= 5 else 0  # 15 minutes lockout after 5 failed attempts
+        admin_attempts[client_ip] = (fails, lock)
+        logger.warning(f"Failed admin authentication attempt from {client_ip} (Attempt {fails}/5)")
         raise HTTPException(status_code=401, detail="Admin unauthorized")
+
+    # Reset failed attempts on success
+    if client_ip in admin_attempts:
+        del admin_attempts[client_ip]
     return True
 
 
@@ -111,18 +189,14 @@ class SessionStartRequest(BaseModel):
 
 class SessionSaveRequest(BaseModel):
     session_id: int
-    code: str
+    code: str = Field(..., max_length=20000)
     time_spent_seconds: Optional[int] = None
-
-class RunCodeRequest(BaseModel):
-    session_id: int
-    code: str
 
 class SubmitCodeRequest(BaseModel):
     session_id: int
-    code: str
+    code: str = Field(..., max_length=20000)
     help_level: Optional[int] = 1
-    simulated_output: Optional[str] = None
+    simulated_output: Optional[str] = Field(None, max_length=10000)
 
 class SetKeyRequest(BaseModel):
     api_key: str
@@ -307,6 +381,13 @@ def login_student(req: LoginRequest):
     # Rate Limiting Check
     rate_key = (roll_no, section)
     now = time.time()
+
+    # Periodic cleanup of expired lockout entries
+    if len(login_attempts) > 100:
+        for k in list(login_attempts.keys()):
+            if login_attempts[k][1] <= now:
+                del login_attempts[k]
+
     if rate_key in login_attempts:
         failures, locked_until = login_attempts[rate_key]
         if now < locked_until:
@@ -317,7 +398,7 @@ def login_student(req: LoginRequest):
 
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, name, section, roll_no, password FROM students WHERE roll_no = ? AND section = ?", (roll_no, section))
+    cursor.execute("SELECT id, name, section, roll_no, password, needs_password_change FROM students WHERE roll_no = ? AND section = ?", (roll_no, section))
     student = cursor.fetchone()
     
     if not student or not verify_password(password, student["password"]):
@@ -338,7 +419,7 @@ def login_student(req: LoginRequest):
     cursor.execute("INSERT INTO auth_tokens (token, student_id, expires_at) VALUES (?, ?, ?)", (token, student["id"], expires))
     conn.commit()
     
-    needs_password_change = verify_password("123", student["password"])
+    needs_password_change = bool(student["needs_password_change"]) if ("needs_password_change" in student.keys() and student["needs_password_change"] is not None) else verify_password("123", student["password"])
     conn.close()
 
     log_event(student_id=student["id"], event_type="login", event_data={"section": section, "roll_no": roll_no})
@@ -385,13 +466,18 @@ def change_password(req: ChangePasswordRequest, student_id: int = Depends(get_cu
         raise HTTPException(status_code=400, detail="Incorrect current password")
     
     hashed = hash_password(req.new_password)
-    cursor.execute("UPDATE students SET password = ? WHERE id = ?", (hashed, student_id))
+    cursor.execute("UPDATE students SET password = ?, needs_password_change = 0 WHERE id = ?", (hashed, student_id))
+    # Security: Revoke all existing auth tokens for this student so old sessions are terminated immediately
+    cursor.execute("DELETE FROM auth_tokens WHERE student_id = ?", (student_id,))
     conn.commit()
     conn.close()
-    return {"message": "Password updated successfully"}
+
+    log_event(student_id=student_id, event_type="password_change")
+
+    return {"message": "Password updated successfully. All sessions revoked. Please log in with your new password."}
 
 @app.post("/api/session/start")
-def start_session(req: SessionStartRequest, student_id: int = Depends(get_current_student)):
+def start_session(req: SessionStartRequest, student_id: int = Depends(require_password_changed)):
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -454,7 +540,7 @@ def start_session(req: SessionStartRequest, student_id: int = Depends(get_curren
     }
 
 @app.post("/api/session/save")
-def save_session(req: SessionSaveRequest, student_id: int = Depends(get_current_student)):
+def save_session(req: SessionSaveRequest, student_id: int = Depends(require_password_changed)):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT id FROM sessions WHERE id = ? AND student_id = ?", (req.session_id, student_id))
@@ -475,7 +561,7 @@ def save_session(req: SessionSaveRequest, student_id: int = Depends(get_current_
     return {"message": "Saved"}
 
 @app.post("/api/session/heartbeat")
-def session_heartbeat(req: HeartbeatRequest, student_id: int = Depends(get_current_student)):
+def session_heartbeat(req: HeartbeatRequest, student_id: int = Depends(require_password_changed)):
     """
     Server-authoritative heartbeat.
     Calculates elapsed time strictly using the server's clock.
@@ -548,52 +634,26 @@ def session_heartbeat(req: HeartbeatRequest, student_id: int = Depends(get_curre
         "total_time_spent": total
     }
 
-@app.post("/api/session/run")
-def run_code_simulated(req: RunCodeRequest, student_id: int = Depends(get_current_student)):
-    code = req.code.strip()
-    if not code:
-        raise HTTPException(status_code=400, detail="Code cannot be empty")
-
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT problem_id FROM sessions WHERE id = ? AND student_id = ?", (req.session_id, student_id))
-    session = cursor.fetchone()
-    
-    if not session:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    problem_id = session["problem_id"]
-    cursor.execute("""
-    SELECT title, topic, difficulty, description, sample_input, sample_output, ai_rubric
-    FROM problems WHERE id = ?
-    """, (problem_id,))
-    problem = dict(cursor.fetchone())
-
-    # Increment run_count for this session
-    cursor.execute("UPDATE sessions SET run_count = COALESCE(run_count, 0) + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (req.session_id,))
-    conn.commit()
-    conn.close()
-
-    result = simulate_run(code=code, problem=problem)
-
-    # Log telemetry event for code run
-    log_event(
-        student_id=student_id,
-        session_id=req.session_id,
-        problem_id=problem_id,
-        event_type="run",
-        event_data={
-            "code_len": len(code),
-            "has_error": result.get("has_error", False),
-            "model_used": result.get("model_used", "")
-        }
-    )
-
-    return result
-
 @app.post("/api/session/submit")
-def submit_code(req: SubmitCodeRequest, student_id: int = Depends(get_current_student)):
+def submit_code(req: SubmitCodeRequest, student_id: int = Depends(require_password_changed)):
+    # Enforce submit cooldown per student to prevent spamming Gemini API
+    now = time.time()
+    last_submit = submit_cooldowns.get(student_id, 0.0)
+    if now - last_submit < SUBMIT_COOLDOWN_SECONDS:
+        remaining = round(SUBMIT_COOLDOWN_SECONDS - (now - last_submit), 1)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Please wait {remaining}s before requesting guidance again."
+        )
+    submit_cooldowns[student_id] = now
+
+    # Opportunistic pruning of cooldown dictionary
+    if len(submit_cooldowns) > 1000:
+        cutoff = now - 60
+        for sid in list(submit_cooldowns.keys()):
+            if submit_cooldowns[sid] < cutoff:
+                del submit_cooldowns[sid]
+
     code = req.code.strip()
     if not code:
         raise HTTPException(status_code=400, detail="Please write your Python code before requesting guidance!")

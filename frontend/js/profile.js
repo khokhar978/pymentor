@@ -179,12 +179,18 @@ async function handlePasswordChange(e, token) {
             throw new Error(data.detail || 'Failed to change password.');
         }
         
-        showAlert('Password successfully updated!', 'success');
+        showAlert('Password updated successfully! Redirecting to login...', 'success');
         document.getElementById('pwdForm').reset();
+
+        // Clear stored token since backend revoked all active sessions
+        localStorage.removeItem('pymentor_student');
+
+        setTimeout(() => {
+            window.location.href = '/login?msg=password_updated';
+        }, 1200);
         
     } catch (err) {
         showAlert(err.message, 'error');
-    } finally {
         submitBtn.disabled = false;
         submitBtn.textContent = 'Update Password';
     }

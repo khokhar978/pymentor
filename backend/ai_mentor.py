@@ -1,7 +1,6 @@
 """
 AI Mentoring Engine using Google GenAI with multi-model fallback cascade,
 context-aware progression tracking, and 3 Socratic guidance levels.
-Also provides simulate_run() for AI-powered code output simulation.
 """
 
 import os
@@ -46,70 +45,6 @@ def get_client():
 
 
 # ─────────────────────────────────────────────
-# SIMULATE RUN — AI-powered output simulation
-# Abstraction layer: swap with real subprocess/Docker later without changing API
-# ─────────────────────────────────────────────
-
-def simulate_run(code: str, problem: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Uses AI to simulate what Python code would output when executed.
-    Returns: { "output": str, "has_error": bool, "model_used": str }
-    """
-    client = get_client()
-    if not client:
-        return {
-            "output": "[Simulation unavailable — API key not configured]",
-            "has_error": True,
-            "model_used": "none"
-        }
-
-    sample_input_vals = problem.get("sample_input", "")
-
-    prompt = (
-        "You are a Python 3 interpreter running in a terminal.\n\n"
-        "Execute this code mentally and return ONLY the terminal output.\n\n"
-        "RULES:\n"
-        f"1. If code calls input(), use these sample values IN ORDER (one per line):\n{sample_input_vals}\n"
-        "2. Return ONLY raw terminal text (stdout + stderr). Zero markdown, no explanations.\n"
-        "3. For errors, use exact Python traceback format:\n"
-        "   Traceback (most recent call last):\n"
-        "     File \"solution.py\", line X, in <module>\n"
-        "   ErrorType: message\n"
-        "4. If no output: return exactly: (no output)\n\n"
-        f"Python Code:\n```python\n{code}\n```"
-    )
-
-    candidate_models = get_available_models()
-    last_error = None
-
-    for model_name in candidate_models:
-        try:
-            logger.info(f"Simulating run with model: {model_name}...")
-            cl = get_client()
-            response = cl.models.generate_content(model=model_name, contents=prompt)
-            output_text = response.text.strip() if response.text else "(no output)"
-            # Strip any accidentally added markdown fences
-            output_text = re.sub(r"^```[a-zA-Z]*\n?", "", output_text, flags=re.MULTILINE)
-            output_text = re.sub(r"\n?```$", "", output_text, flags=re.MULTILINE).strip()
-            has_error = any(kw in output_text for kw in [
-                "Traceback", "Error:", "SyntaxError", "NameError", "TypeError",
-                "ValueError", "IndentationError", "AttributeError", "ZeroDivisionError",
-                "ImportError", "KeyError", "IndexError"
-            ])
-            record_model_usage(model_name)
-            return {"output": output_text, "has_error": has_error, "model_used": model_name}
-        except Exception as e:
-            last_error = str(e)
-            logger.warning(f"Simulate run model {model_name} failed: {last_error}")
-            if "429" in last_error or "RESOURCE_EXHAUSTED" in last_error:
-                record_model_rate_limited(model_name, last_error)
-            continue
-
-    return {
-        "output": "[Could not simulate output — all models busy. Please try again in a moment.]",
-        "has_error": True,
-        "model_used": "failed"
-    }
 
 
 # ─────────────────────────────────────────────

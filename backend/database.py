@@ -76,10 +76,16 @@ def init_db():
         name TEXT NOT NULL,
         section TEXT NOT NULL,
         password TEXT NOT NULL DEFAULT '123',
+        needs_password_change INTEGER DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(roll_no, section)
     );
     """)
+
+    try:
+        cursor.execute("ALTER TABLE students ADD COLUMN needs_password_change INTEGER DEFAULT 1")
+    except Exception:
+        pass
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS sessions (
@@ -203,8 +209,8 @@ def seed_students(cursor):
             })
     for s in authorized:
         cursor.execute("""
-        INSERT OR IGNORE INTO students (roll_no, name, section, password)
-        VALUES (?, ?, ?, ?)
+        INSERT OR IGNORE INTO students (roll_no, name, section, password, needs_password_change)
+        VALUES (?, ?, ?, ?, 1)
         """, (s["roll_no"], s["name"], s["section"], s["password"]))
 
 def seed_problems(cursor):

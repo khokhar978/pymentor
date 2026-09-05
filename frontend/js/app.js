@@ -488,6 +488,15 @@ async function startSession() {
                 help_level:  state.helpLevel
             })
         });
+        if (res.status === 403) {
+            alert('Security Requirement: Please change your default password in Profile before starting practice.');
+            window.location.href = '/profile?force_change=1';
+            return;
+        }
+        if (!res.ok) {
+            const errData = await res.json();
+            throw new Error(errData.detail || 'Session start failed');
+        }
         const session = await res.json();
         state.sessionId     = session.session_id;
         state.attemptsCount = session.attempts_count || 0;
@@ -561,7 +570,10 @@ async function getGuidance() {
         state.attemptsCount = result.attempt_number || (state.attemptsCount + 1);
         updateAttemptDisplay();
 
-        el.guidanceBody.innerHTML = marked.parse(result.feedback || '');
+        const parsedMarkdown = marked.parse(result.feedback || '');
+        el.guidanceBody.innerHTML = (typeof DOMPurify !== 'undefined')
+            ? DOMPurify.sanitize(parsedMarkdown)
+            : parsedMarkdown;
         el.guidanceBody.scrollTop = 0;
 
         if (result.is_correct) {

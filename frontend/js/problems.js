@@ -59,6 +59,23 @@ function updateStudentDisplay(student) {
     if (nameEl) nameEl.textContent = student.name + ` (Roll ${student.roll_no})`;
     if (secEl)  secEl.textContent  = 'Sec ' + student.section;
     if (btnEl)  btnEl.textContent  = 'Profile';
+
+    if (student.needs_password_change) {
+        let banner = document.getElementById('pwdWarningBanner');
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'pwdWarningBanner';
+            banner.style.cssText = 'background:#fef3c7;border:1px solid #fde68a;color:#92400e;padding:12px 16px;border-radius:8px;font-size:13.5px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;gap:12px;';
+            banner.innerHTML = `
+                <span>⚠️ <strong>Security Notice:</strong> You are currently using the default password. Please change your password to secure your account.</span>
+                <a href="/profile?force_change=1" style="background:#d97706;color:#fff;padding:6px 14px;border-radius:6px;text-decoration:none;font-weight:600;font-size:12.5px;white-space:nowrap;">Change Password &rarr;</a>
+            `;
+            const hero = document.querySelector('.page-hero');
+            if (hero && hero.parentNode) {
+                hero.parentNode.insertBefore(banner, hero.nextSibling);
+            }
+        }
+    }
 }
 
 // ── EXPAND / COLLAPSE ALL ─────────────────────────
