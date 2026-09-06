@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Student Profile | Python Practice</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="alternate icon" href="/favicon.ico">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=4">
+    <link rel="alternate icon" href="/favicon.ico?v=4">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -19,7 +19,7 @@
         })();
     </script>
     <script type="module" src="/js/shared/theme.js"></script>
-    <link rel="stylesheet" href="/css/style.css?v=2.8">
+    <link rel="stylesheet" href="/css/style.css?v=3.1">
     <style>
         .profile-container {
             max-width: 1000px;
@@ -230,6 +230,32 @@
             gap: 16px;
             color: var(--text-body);
         }
+
+        @media (max-width: 768px) {
+            .profile-container {
+                margin: 20px auto;
+                padding: 0 12px;
+            }
+            .profile-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 14px;
+                margin-bottom: 20px;
+            }
+            .profile-header h1 {
+                font-size: 22px;
+            }
+            .grid-2col {
+                grid-template-columns: 1fr;
+                gap: 16px;
+            }
+            .profile-card {
+                padding: 18px 14px;
+            }
+            .stat-value {
+                font-size: 24px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -240,7 +266,7 @@
 
     <header class="site-header">
         <a href="/" class="header-brand">
-            <span class="brand-icon">🐍</span>
+            <img src="/favicon.svg" alt="PyMentor" class="brand-icon-img">
             <span>Python Practice</span>
             <span class="brand-sub">BCA Lab</span>
         </a>
@@ -306,6 +332,22 @@
                 </div>
 
                 <div class="profile-card">
+                    <h3>Guidance Preference</h3>
+                    <p style="font-size: 13px; color: var(--text-faint); margin-bottom: 14px;">
+                        Set your preferred starting AI guidance level for new problem sessions.
+                    </p>
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        <select id="defaultLevelSelect" style="flex: 1; min-width: 170px; padding: 9px 12px; border-radius: 8px; border: var(--border); background: var(--bg-card); color: var(--text-primary); font-size: 13px;">
+                            <option value="1">&#x1F7E2; Baby Steps — detailed hints</option>
+                            <option value="2">&#x1F7E1; Guided — balanced nudges</option>
+                            <option value="3">&#x1F534; Challenge — minimal clues</option>
+                        </select>
+                        <button id="saveSettingsBtn" class="btn-primary" style="padding: 9px 16px; font-size: 13px; border-radius: 8px;">Save</button>
+                    </div>
+                    <span id="settingsFeedback" style="display: inline-block; font-size: 13px; font-weight: 500; margin-top: 8px;"></span>
+                </div>
+
+                <div class="profile-card">
                     <h3>Account Security</h3>
                     <p style="font-size: 13px; color: var(--text-faint); margin-bottom: 16px;">
                         Update your account password to ensure your lab sessions are secure.
@@ -331,6 +373,6 @@
         </div>
     </div>
 
-    <script type="module" src="/js/profile.js?v=2.7"></script>
+    <script type="module" src="/js/profile.js?v=2.8"></script>
 </body>
 </html>

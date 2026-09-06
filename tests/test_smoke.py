@@ -23,40 +23,47 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 from backend.main import app, ADMIN_SECRET
 from backend.database import get_connection, hash_password
+from backend import state
 
 client = TestClient(app)
 
-def cleanup_test_student():
+def cleanup_test_student(roll_no='9999'):
     """Cleans up the test student and any associated test sessions/tokens."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM students WHERE roll_no = '9999' AND section = 'TEST'")
+    cursor.execute("SELECT id FROM students WHERE roll_no = ? AND section = 'TEST'", (roll_no,))
     rows = cursor.fetchall()
     for row in rows:
         sid = row["id"]
         cursor.execute("DELETE FROM events WHERE student_id = ?", (sid,))
         cursor.execute("DELETE FROM auth_tokens WHERE student_id = ?", (sid,))
+        cursor.execute("DELETE FROM submissions WHERE session_id IN (SELECT id FROM sessions WHERE student_id = ?)", (sid,))
         cursor.execute("DELETE FROM sessions WHERE student_id = ?", (sid,))
         cursor.execute("DELETE FROM students WHERE id = ?", (sid,))
     conn.commit()
     conn.close()
 
-def setup_test_student(needs_change=0):
-    """Creates an isolated temporary test student, cleans up existing if any."""
-    cleanup_test_student()
+def create_test_student(roll_no='9999', name='Smoke Test Student', needs_change=0):
+    """Creates a temporary test student with specified roll and properties."""
+    cleanup_test_student(roll_no)
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO students (name, roll_no, section, password, needs_password_change)
-        VALUES ('Smoke Test Student', '9999', 'TEST', ?, ?)
-    """, (hash_password("smoke_pass_123"), needs_change))
+        VALUES (?, ?, 'TEST', ?, ?)
+    """, (name, roll_no, hash_password("smoke_pass_123"), needs_change))
     conn.commit()
     student_id = cursor.lastrowid
     conn.close()
     return student_id
+
+def setup_test_student(needs_change=0):
+    """Convenience wrapper for default test student (roll_no 9999)."""
+    return create_test_student('9999', 'Smoke Test Student', needs_change)
 
 # ─────────────────────────────────────────────────────────────
 # 1. STATIC PAGES, FAVICONS & MODULE RESOLUTION
@@ -71,6 +78,7 @@ def test_pages_and_static_routes():
         ("/profile", 200),
         ("/admin", 200),
         ("/favicon.svg", 200),
+        ("/logo.svg", 200),
         ("/favicon.ico", 200),
         ("/js/shared/auth.js", 200),
         ("/js/shared/utils.js", 200),
@@ -94,7 +102,11 @@ def test_pages_and_static_routes():
         assert 'btn-theme-toggle' in html, f"Theme toggle button missing on {student_page}"
         assert 'theme.js' in html, f"Theme script missing on {student_page}"
 
-    print("  [OK] All 6 static pages, favicons, ES modules (including theme.js), and theme toggles serve valid HTTP 200 responses")
+    practice_html = client.get("/practice").text
+    assert 'id="gutterProblem"' in practice_html, "Gutter problem separator missing on /practice"
+    assert 'id="gutterOutput"' in practice_html, "Gutter output separator missing on /practice"
+    assert 'id="solvedBadge"' in practice_html, "Solved badge element missing on /practice"
+    print("  [OK] All 6 static pages, favicons, ES modules, theme toggles, resizable gutters, and solved badge serve valid responses")
 
 # ─────────────────────────────────────────────────────────────
 # 2. BROWSER COOP/COEP SECURITY HEADERS
@@ -283,6 +295,22 @@ def test_student_full_journey():
         assert hb_res.status_code == 200, f"Heartbeat failed: {hb_res.text}"
         print("  [OK] Heartbeat ping accepted")
 
+        # 4b. Solved session heartbeat guard (Feature 3: stops counting time when solved)
+        conn = get_connection()
+        conn.cursor().execute("UPDATE sessions SET status = 'solved', time_spent_seconds = 120 WHERE id = ?", (session_id,))
+        conn.commit()
+        conn.close()
+
+        hb_solved_res = client.post("/api/session/heartbeat", json={
+            "session_id": session_id
+        }, headers=headers)
+        assert hb_solved_res.status_code == 200
+        hb_solved_data = hb_solved_res.json()
+        assert hb_solved_data["status"] == "completed", "Solved session heartbeat should report completed"
+        assert hb_solved_data["credited_seconds"] == 0, "Solved session must credit 0 seconds"
+        assert hb_solved_data["total_time_spent"] == 120, "Total time spent must remain fixed"
+        print("  [OK] Solved session heartbeat strictly credits 0 seconds and halts timer")
+
         # 5. Telemetry event
         tel_res = client.post("/api/telemetry/event", json={
             "session_id": session_id,
@@ -327,7 +355,30 @@ def test_progress_and_profile_endpoints():
         assert "student" in prof_data and "stats" in prof_data
         assert prof_data["student"]["name"] == "Smoke Test Student"
         assert "total_sessions" in prof_data["stats"]
+        assert prof_data["student"].get("default_help_level") == 1, "Initial default_help_level should be 1"
         print("  [OK] Student profile endpoint returns full student analytics")
+
+        # Guidance preference settings update endpoint
+        settings_res = client.post("/api/student/settings", json={"default_help_level": 3}, headers=headers)
+        assert settings_res.status_code == 200, f"Settings update failed: {settings_res.text}"
+        assert settings_res.json() == {"success": True, "default_help_level": 3}
+
+        # Verify updated setting in profile
+        prof_res2 = client.get("/api/student/profile", headers=headers)
+        assert prof_res2.status_code == 200
+        assert prof_res2.json()["student"]["default_help_level"] == 3, "default_help_level was not updated to 3"
+
+        # Verify validation rejection for out-of-range level
+        bad_settings = client.post("/api/student/settings", json={"default_help_level": 5}, headers=headers)
+        assert bad_settings.status_code == 422, f"Expected 422 for level 5, got {bad_settings.status_code}"
+
+        # Verify login response includes updated default_help_level
+        relogin_res = client.post("/api/student/login", json={
+            "section": "TEST", "roll_no": "9999", "password": "smoke_pass_123"
+        })
+        assert relogin_res.status_code == 200
+        assert relogin_res.json().get("default_help_level") == 3, "Login should return updated default_help_level: 3"
+        print("  [OK] Default guidance preference setting update, validation and persistence verified")
     finally:
         cleanup_test_student()
 
@@ -381,6 +432,178 @@ def test_admin_dashboard_and_telemetry_inspection():
         cleanup_test_student()
 
 # ─────────────────────────────────────────────────────────────
+# 9. CODE SUBMISSION, COOLDOWNS & PAYLOAD LIMITS (MOCKED AI)
+# ─────────────────────────────────────────────────────────────
+def test_code_submit_and_cooldown():
+    """Verify submit guidance lifecycle, per-student cooldown (429), and max payload limit (422)."""
+    student_id = setup_test_student(needs_change=0)
+    try:
+        # 1. Login to get token
+        login_res = client.post("/api/student/login", json={
+            "roll_no": "9999",
+            "section": "TEST",
+            "password": "smoke_pass_123"
+        })
+        token = login_res.json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # 2. Start session
+        session_res = client.post("/api/session/start", json={"problem_id": 1}, headers=headers)
+        assert session_res.status_code == 200, f"Session start failed: {session_res.text}"
+        session_id = session_res.json()["session_id"]
+
+        # Clear cooldown for isolation
+        state.submit_cooldowns.pop(student_id, None)
+
+        # 3. Mock evaluate_code in session router
+        mock_eval = {
+            "is_correct": True,
+            "feedback": "Excellent solution! All sample tests pass.",
+            "model_used": "mock-gemini-flash"
+        }
+        with patch("backend.routers.session.evaluate_code", return_value=mock_eval):
+            # Normal submit
+            submit_res = client.post("/api/session/submit", json={
+                "session_id": session_id,
+                "code": "print('hello world')",
+                "help_level": 1,
+                "simulated_output": "hello world"
+            }, headers=headers)
+            assert submit_res.status_code == 200, f"Expected 200, got {submit_res.status_code}: {submit_res.text}"
+            sub_data = submit_res.json()
+            assert sub_data["is_correct"] is True
+            assert sub_data["attempt_number"] == 1
+            assert "Excellent solution" in sub_data["feedback"]
+            print("  [OK] AI code submission succeeds with mocked evaluator (HTTP 200, attempt #1, solved)")
+
+            # 4. Immediate second submit triggers cooldown (429)
+            cooldown_res = client.post("/api/session/submit", json={
+                "session_id": session_id,
+                "code": "print('again')",
+                "help_level": 1
+            }, headers=headers)
+            assert cooldown_res.status_code == 429, f"Expected 429 cooldown, got {cooldown_res.status_code}"
+            assert "before requesting guidance again" in cooldown_res.json()["detail"]
+            print("  [OK] Immediate second submit correctly throttled by 3s cooldown (HTTP 429)")
+
+        # 5. Oversized payload (> 20,000 chars) rejected by Pydantic (HTTP 422)
+        state.submit_cooldowns.pop(student_id, None)
+        huge_code = "x = 1\n" * 4500  # ~31,500 characters
+        huge_res = client.post("/api/session/submit", json={
+            "session_id": session_id,
+            "code": huge_code,
+            "help_level": 1
+        }, headers=headers)
+        assert huge_res.status_code == 422, f"Expected 422 for oversized payload, got {huge_res.status_code}"
+        print("  [OK] Oversized code payload (> 20,000 characters) rejected (HTTP 422)")
+
+    finally:
+        state.submit_cooldowns.pop(student_id, None)
+        cleanup_test_student()
+
+
+# ─────────────────────────────────────────────────────────────
+# 10. CROSS-STUDENT SESSION IDOR ISOLATION
+# ─────────────────────────────────────────────────────────────
+def test_cross_student_idor():
+    """Verify that Student B cannot save, heartbeat, or submit against Student A's session (IDOR protection)."""
+    id_a = create_test_student("9991", "Student A", needs_change=0)
+    id_b = create_test_student("9992", "Student B", needs_change=0)
+
+    try:
+        # Login Student A
+        res_a = client.post("/api/student/login", json={"roll_no": "9991", "section": "TEST", "password": "smoke_pass_123"})
+        token_a = res_a.json()["token"]
+        headers_a = {"Authorization": f"Bearer {token_a}"}
+
+        # Login Student B
+        res_b = client.post("/api/student/login", json={"roll_no": "9992", "section": "TEST", "password": "smoke_pass_123"})
+        token_b = res_b.json()["token"]
+        headers_b = {"Authorization": f"Bearer {token_b}"}
+
+        # Student A creates a session
+        sess_a_res = client.post("/api/session/start", json={"problem_id": 1}, headers=headers_a)
+        assert sess_a_res.status_code == 200
+        session_id_a = sess_a_res.json()["session_id"]
+
+        # Student B attempts to save code to Student A's session -> must be rejected (404)
+        save_idor = client.post("/api/session/save", json={
+            "session_id": session_id_a,
+            "code": "malicious_code_overwrite()"
+        }, headers=headers_b)
+        assert save_idor.status_code == 404, f"Expected 404 for cross-student save, got {save_idor.status_code}"
+        print("  [OK] Cross-student session save attempt blocked (HTTP 404)")
+
+        # Student B attempts to heartbeat Student A's session -> must be rejected (404)
+        hb_idor = client.post("/api/session/heartbeat", json={"session_id": session_id_a}, headers=headers_b)
+        assert hb_idor.status_code == 404, f"Expected 404 for cross-student heartbeat, got {hb_idor.status_code}"
+        print("  [OK] Cross-student session heartbeat attempt blocked (HTTP 404)")
+
+        # Student B attempts to submit code against Student A's session -> must be rejected (404)
+        sub_idor = client.post("/api/session/submit", json={
+            "session_id": session_id_a,
+            "code": "print('steal')"
+        }, headers=headers_b)
+        assert sub_idor.status_code == 404, f"Expected 404 for cross-student submit, got {sub_idor.status_code}"
+        print("  [OK] Cross-student session submit attempt blocked (HTTP 404)")
+
+    finally:
+        cleanup_test_student("9991")
+        cleanup_test_student("9992")
+
+
+# ─────────────────────────────────────────────────────────────
+# 11. ADMIN BRUTE FORCE LOCKOUT & RATE LIMITING
+# ─────────────────────────────────────────────────────────────
+def test_admin_lockout_and_rate_limiting():
+    """Verify that multiple failed admin attempts trigger a 15-minute brute-force lockout (HTTP 429),
+    totally blocking that IP even if a valid secret is sent later, while keeping localhost/other IPs unblocked."""
+    test_ip = "203.0.113.10"
+    state.admin_attempts.pop(test_ip, None)
+    state.admin_attempts.pop("127.0.0.1", None)
+
+    try:
+        # Send 5 incorrect attempts from test_ip using CF-Connecting-IP
+        for i in range(1, 6):
+            res = client.get("/api/admin/dashboard", headers={
+                "X-Admin-Secret": f"wrong_secret_{i}",
+                "CF-Connecting-IP": test_ip
+            })
+            assert res.status_code == 401, f"Expected 401 on attempt {i}, got {res.status_code}"
+
+        print("  [OK] 5 consecutive failed admin attempts from Cloudflare IP rejected (HTTP 401)")
+
+        # 6th attempt with wrong secret: locked out (HTTP 429)
+        lockout_res = client.get("/api/admin/dashboard", headers={
+            "X-Admin-Secret": "wrong_secret_6",
+            "CF-Connecting-IP": test_ip
+        })
+        assert lockout_res.status_code == 429, f"Expected 429 on 6th attempt, got {lockout_res.status_code}"
+        assert "Locked out for" in lockout_res.json()["detail"]
+        print("  [OK] 6th failed attempt triggers 15-minute lockout (HTTP 429)")
+
+        # 7th attempt with VALID secret from the locked-out IP: STILL blocked (total IP block)
+        locked_valid_res = client.get("/api/admin/dashboard", headers={
+            "X-Admin-Secret": ADMIN_SECRET,
+            "CF-Connecting-IP": test_ip
+        })
+        assert locked_valid_res.status_code == 429, f"Expected 429 on locked IP even with valid secret, got {locked_valid_res.status_code}"
+        print("  [OK] Locked-out IP is totally blocked even if valid secret is sent (HTTP 429)")
+
+        # Request with VALID secret from localhost (127.0.0.1): succeeds (HTTP 200)
+        local_res = client.get("/api/admin/dashboard", headers={
+            "X-Admin-Secret": ADMIN_SECRET,
+            "CF-Connecting-IP": "127.0.0.1"
+        })
+        assert local_res.status_code == 200, f"Expected 200 from localhost, got {local_res.status_code}"
+        print("  [OK] Localhost/unblocked IP can still access admin dashboard with valid secret (HTTP 200)")
+
+    finally:
+        state.admin_attempts.pop(test_ip, None)
+        state.admin_attempts.pop("127.0.0.1", None)
+
+
+# ─────────────────────────────────────────────────────────────
 # MAIN TEST RUNNER
 # ─────────────────────────────────────────────────────────────
 def run_all_smoke_tests():
@@ -389,33 +612,42 @@ def run_all_smoke_tests():
     print("=" * 65)
     start_time = time.time()
 
-    print("\n[Suite 1/8: Static Routing & Modules]")
+    print("\n[Suite 1/11: Static Routing & Modules]")
     test_pages_and_static_routes()
 
-    print("\n[Suite 2/8: Security & Browser Isolation]")
+    print("\n[Suite 2/11: Security & Browser Isolation]")
     test_coop_coep_and_security_headers()
 
-    print("\n[Suite 3/8: Student Authentication & Failures]")
+    print("\n[Suite 3/11: Student Authentication & Failures]")
     test_login_failure_no_500()
 
-    print("\n[Suite 4/8: Password Change & Security Gating]")
+    print("\n[Suite 4/11: Password Change & Security Gating]")
     test_password_change_and_security_gating()
 
-    print("\n[Suite 5/8: Curriculum & Problem Content]")
+    print("\n[Suite 5/11: Curriculum & Problem Content]")
     test_curriculum_and_content_endpoints()
 
-    print("\n[Suite 6/8: Practice Session Lifecycle]")
+    print("\n[Suite 6/11: Practice Session Lifecycle]")
     test_student_full_journey()
 
-    print("\n[Suite 7/8: Progress & Profile Analytics]")
+    print("\n[Suite 7/11: Progress & Profile Analytics]")
     test_progress_and_profile_endpoints()
 
-    print("\n[Suite 8/8: Admin Operations & Telemetry Inspection]")
+    print("\n[Suite 8/11: Admin Operations & Telemetry Inspection]")
     test_admin_dashboard_and_telemetry_inspection()
+
+    print("\n[Suite 9/11: AI Code Submission & Cooldown]")
+    test_code_submit_and_cooldown()
+
+    print("\n[Suite 10/11: Cross-Student Session IDOR Protection]")
+    test_cross_student_idor()
+
+    print("\n[Suite 11/11: Admin Brute-Force Lockout]")
+    test_admin_lockout_and_rate_limiting()
 
     duration = round(time.time() - start_time, 2)
     print("\n" + "=" * 65)
-    print(f"  ALL 8 SMOKE TEST SUITES PASSED SUCCESSFULLY in {duration}s! ")
+    print(f"  ALL 11 SMOKE TEST SUITES PASSED SUCCESSFULLY in {duration}s! ")
     print("=" * 65)
 
 if __name__ == "__main__":

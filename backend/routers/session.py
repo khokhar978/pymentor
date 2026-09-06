@@ -112,10 +112,6 @@ def save_session(req: SessionSaveRequest, student_id: int = Depends(require_pass
     if req.is_run:
         updates.append("run_count = COALESCE(run_count, 0) + 1")
 
-    if req.time_spent_seconds is not None:
-        updates.append("time_spent_seconds = COALESCE(time_spent_seconds, 0) + ?")
-        params.append(req.time_spent_seconds)
-
     params.append(req.session_id)
 
     query = f"UPDATE sessions SET {', '.join(updates)} WHERE id = ?"
@@ -147,7 +143,7 @@ def session_heartbeat(req: HeartbeatRequest, student_id: int = Depends(require_p
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
-    SELECT id, last_heartbeat_at, time_spent_seconds 
+    SELECT id, last_heartbeat_at, time_spent_seconds, status 
     FROM sessions 
     WHERE id = ? AND student_id = ?
     """, (req.session_id, student_id))
@@ -155,6 +151,15 @@ def session_heartbeat(req: HeartbeatRequest, student_id: int = Depends(require_p
     if not session:
         conn.close()
         raise HTTPException(status_code=404, detail="Session not found")
+
+    # Stop counting time if the session is already solved
+    if session["status"] == "solved":
+        conn.close()
+        return {
+            "status": "completed",
+            "credited_seconds": 0,
+            "total_time_spent": session["time_spent_seconds"] or 0
+        }
 
     now = datetime.now()
     now_str = now.strftime('%Y-%m-%d %H:%M:%S')
@@ -167,8 +172,8 @@ def session_heartbeat(req: HeartbeatRequest, student_id: int = Depends(require_p
             last_hb = datetime.strptime(last_hb_cleaned, "%Y-%m-%d %H:%M:%S")
             delta_seconds = int((now - last_hb).total_seconds())
 
-            # Reject heartbeats arriving too fast (< 10s) to stop script spam and avoid unnecessary DB writes
-            if delta_seconds < 10:
+            # Reject heartbeats arriving too fast (< 14s) to stop script spam and avoid unnecessary DB writes
+            if delta_seconds < 14:
                 conn.close()
                 return {
                     "status": "ignored",
@@ -176,9 +181,9 @@ def session_heartbeat(req: HeartbeatRequest, student_id: int = Depends(require_p
                     "total_time_spent": session["time_spent_seconds"] or 0
                 }
 
-            # Valid heartbeat window (10s to 45s): credit actual elapsed time, capped at 25s
-            if 10 <= delta_seconds <= 45:
-                credited_seconds = min(delta_seconds, 25)
+            # Valid heartbeat window (14s to 60s for 20s nominal interval): credit actual elapsed time, capped at 30s
+            if 14 <= delta_seconds <= 60:
+                credited_seconds = min(delta_seconds, 30)
         except Exception:
             credited_seconds = 0
 
@@ -191,7 +196,7 @@ def session_heartbeat(req: HeartbeatRequest, student_id: int = Depends(require_p
         WHERE id = ?
         """, (credited_seconds, now_str, req.session_id))
     else:
-        # First heartbeat or after long idle gap (>45s): re-anchor server clock without crediting idle time
+        # First heartbeat or after long idle gap (>60s): re-anchor server clock without crediting idle time
         cursor.execute("""
         UPDATE sessions 
         SET last_heartbeat_at = ?,

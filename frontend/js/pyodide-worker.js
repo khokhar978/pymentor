@@ -81,6 +81,7 @@ def _interactive_input(prompt=""):
     return str(val).rstrip("\\r\\n")
 
 builtins.input = _interactive_input
+_initial_globals_keys = set(globals().keys()) | {'_initial_globals_keys', '_interactive_input'}
 `);
 
             self.postMessage({ type: "ready", message: "Ready" });
@@ -94,16 +95,43 @@ builtins.input = _interactive_input
             return;
         }
 
+        let ns = null;
         try {
             if (controlArray) {
                 Atomics.store(controlArray, 0, 0);
             }
-            await pyodide.runPythonAsync(msg.code);
+
+            // 1. Purge any leaked variables from globals before run
+            await pyodide.runPythonAsync(`
+for _k in list(globals().keys()):
+    if _k not in _initial_globals_keys:
+        del globals()[_k]
+`);
+
+            // 2. Create fresh isolated global dictionary for this run
+            ns = pyodide.runPython("import builtins; dict(__name__='__main__', __builtins__=builtins)");
+            await pyodide.runPythonAsync(msg.code, { globals: ns });
             self.postMessage({ type: "finished", has_error: false });
         } catch (err) {
             const cleanErr = formatCleanPythonError(err);
             self.postMessage({ type: "stderr", text: cleanErr + "\n" });
             self.postMessage({ type: "finished", has_error: true, error: cleanErr });
+        } finally {
+            if (ns) {
+                try {
+                    ns.destroy();
+                } catch (cleanupErr) {
+                    console.warn("Failed to destroy run namespace:", cleanupErr);
+                }
+            }
+            try {
+                // 3. Purge any variables that might have leaked into globals after run
+                await pyodide.runPythonAsync(`
+for _k in list(globals().keys()):
+    if _k not in _initial_globals_keys:
+        del globals()[_k]
+`);
+            } catch (cleanupErr) {}
         }
     }
 };

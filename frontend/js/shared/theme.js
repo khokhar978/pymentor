@@ -26,6 +26,7 @@ export function applyTheme(theme) {
 
     // Update all theme toggle buttons on the page
     document.querySelectorAll('.btn-theme-toggle').forEach(btn => {
+        if (btn.id === 'suggestToggleBtn' || btn.classList.contains('btn-suggest-toggle')) return;
         btn.textContent = validTheme === 'dark' ? '☀️' : '🌙';
         const label = validTheme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode';
         btn.setAttribute('aria-label', label);

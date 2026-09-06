@@ -7,11 +7,11 @@ from fastapi import APIRouter, HTTPException, Depends
 try:
     from pymentor.backend.database import get_connection, log_event
     from pymentor.backend.deps import get_current_student
-    from pymentor.backend.models import TelemetryEventRequest
+    from pymentor.backend.models import TelemetryEventRequest, UpdateSettingsRequest
 except ImportError:
     from backend.database import get_connection, log_event
     from backend.deps import get_current_student
-    from backend.models import TelemetryEventRequest
+    from backend.models import TelemetryEventRequest, UpdateSettingsRequest
 
 router = APIRouter(prefix="/api", tags=["telemetry"])
 
@@ -42,7 +42,7 @@ def record_telemetry(req: TelemetryEventRequest, student_id: int = Depends(get_c
 def get_profile(student_id: int = Depends(get_current_student)):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, name, roll_no, section FROM students WHERE id = ?", (student_id,))
+    cursor.execute("SELECT id, name, roll_no, section, default_help_level FROM students WHERE id = ?", (student_id,))
     student = cursor.fetchone()
     if not student:
         conn.close()
@@ -97,8 +97,11 @@ def get_profile(student_id: int = Depends(get_current_student)):
 
     conn.close()
 
+    student_dict = dict(student)
+    student_dict["default_help_level"] = student_dict.get("default_help_level") or 1
+
     return {
-        "student": dict(student),
+        "student": student_dict,
         "stats": {
             "completed_problems": completed_problems,
             "total_attempts": total_attempts,
@@ -107,3 +110,16 @@ def get_profile(student_id: int = Depends(get_current_student)):
         "topic_mastery": topic_mastery,
         "activity_history": activity_history
     }
+
+
+@router.post("/student/settings")
+def update_settings(req: UpdateSettingsRequest, student_id: int = Depends(get_current_student)):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE students SET default_help_level = ? WHERE id = ?",
+        (req.default_help_level, student_id)
+    )
+    conn.commit()
+    conn.close()
+    return {"success": True, "default_help_level": req.default_help_level}

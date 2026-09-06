@@ -1,0 +1,14 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <rect x="0" y="0" width="512" height="512" rx="48" fill="#20232A"/>
+
+  <!-- left bracket: mastered ground -->
+  <path d="M 220 150 L 132 256 L 220 362" stroke="#2DD4BF" stroke-width="34"
+        stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- right bracket: ground ahead -->
+  <path d="M 292 150 L 380 256 L 292 362" stroke="#A3E635" stroke-width="34"
+        stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- you-are-here marker -->
+  <circle cx="256" cy="256" r="20" fill="#FFFFFF"/>
+</svg>

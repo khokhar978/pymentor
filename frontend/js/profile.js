@@ -41,6 +41,46 @@ document.addEventListener('DOMContentLoaded', () => {
     const pwdForm = document.getElementById('pwdForm');
     pwdForm.addEventListener('submit', (e) => handlePasswordChange(e, student.token));
 
+    // Setup Guidance Preference Settings
+    const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+    if (saveSettingsBtn) {
+        saveSettingsBtn.addEventListener('click', async () => {
+            const levelSelect = document.getElementById('defaultLevelSelect');
+            const feedback = document.getElementById('settingsFeedback');
+            const level = parseInt(levelSelect.value, 10);
+            saveSettingsBtn.disabled = true;
+            saveSettingsBtn.textContent = 'Saving...';
+            try {
+                const res = await fetch('/api/student/settings', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${student.token}`
+                    },
+                    body: JSON.stringify({ default_help_level: level })
+                });
+                if (!res.ok) throw new Error('Failed to save settings');
+
+                // Update local storage so practice sessions pick it up immediately
+                try {
+                    const localStudent = JSON.parse(localStorage.getItem('pymentor_student') || '{}');
+                    localStudent.default_help_level = level;
+                    localStorage.setItem('pymentor_student', JSON.stringify(localStudent));
+                } catch (e) {}
+
+                feedback.textContent = '✓ Saved successfully!';
+                feedback.style.color = '#10b981';
+                setTimeout(() => { feedback.textContent = ''; }, 3000);
+            } catch (err) {
+                feedback.textContent = 'Failed to save.';
+                feedback.style.color = 'var(--error)';
+            } finally {
+                saveSettingsBtn.disabled = false;
+                saveSettingsBtn.textContent = 'Save';
+            }
+        });
+    }
+
     // Fetch Profile Data
     fetchProfileData(student.token);
 });
@@ -68,6 +108,10 @@ async function fetchProfileData(token) {
         renderStats(data);
         renderTopicMastery(data.topic_mastery);
         renderActivity(data.activity_history);
+
+        if (data.student && document.getElementById('defaultLevelSelect')) {
+            document.getElementById('defaultLevelSelect').value = String(data.student.default_help_level || 1);
+        }
 
     } catch (err) {
         console.error('Error fetching profile:', err);

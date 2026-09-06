@@ -177,6 +177,13 @@ select, input, textarea { font-family: inherit; }
     white-space: nowrap;
 }
 .brand-icon { font-size: 18px; }
+.brand-icon-img {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    flex-shrink: 0;
+    vertical-align: middle;
+}
 .brand-sub {
     font-size: 11px;
     font-weight: 400;
@@ -700,7 +707,7 @@ select, input, textarea { font-family: inherit; }
     width: var(--problem-panel-width);
     flex-shrink: 0;
     background: var(--bg-surface);
-    border-right: var(--border);
+    border-right: none;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
@@ -824,7 +831,7 @@ select, input, textarea { font-family: inherit; }
     gap: 8px;
     padding: 0 12px;
     border-top: var(--border);
-    border-bottom: var(--border);
+    border-bottom: none;
     background: var(--bg-hover);
     flex-shrink: 0;
 }
@@ -1175,4 +1182,314 @@ select, input, textarea { font-family: inherit; }
 }
 .btn-theme-toggle:active {
     transform: scale(0.95);
+}
+
+/* ─── SUGGESTION TOGGLE BUTTON ────────────── */
+.btn-suggest-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 16px;
+    transition: background 0.15s, border-color 0.15s, transform 0.15s, opacity 0.15s, box-shadow 0.15s;
+    user-select: none;
+    flex-shrink: 0;
+}
+.btn-suggest-toggle:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-hover);
+    transform: scale(1.05);
+}
+.btn-suggest-toggle:active {
+    transform: scale(0.95);
+}
+.btn-suggest-toggle.active {
+    background: rgba(245, 158, 11, 0.15);
+    border-color: rgba(245, 158, 11, 0.5);
+    box-shadow: 0 0 8px rgba(245, 158, 11, 0.25);
+}
+.btn-suggest-toggle.inactive {
+    opacity: 0.4;
+    filter: grayscale(0.8);
+    background: var(--bg-surface);
+    border-color: var(--border-color);
+}
+
+/* ─── RESIZABLE SPLIT GUTTERS ─────────────── */
+.gutter {
+    position: relative;
+    z-index: 10;
+    user-select: none;
+    background: var(--border-color);
+    transition: background-color 0.15s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.gutter-col {
+    width: 6px;
+    cursor: col-resize;
+}
+
+.gutter-row {
+    height: 6px;
+    cursor: row-resize;
+}
+
+.gutter-handle {
+    background: var(--text-faint);
+    border-radius: 4px;
+    opacity: 0.4;
+    transition: all 0.15s ease;
+}
+
+.gutter-col .gutter-handle {
+    width: 2px;
+    height: 32px;
+}
+
+.gutter-row .gutter-handle {
+    width: 32px;
+    height: 2px;
+}
+
+.gutter:hover,
+.gutter.active {
+    background: var(--accent);
+}
+
+.gutter:hover .gutter-handle,
+.gutter.active .gutter-handle {
+    background: var(--text-white);
+    opacity: 1;
+}
+
+.gutter-col:hover .gutter-handle,
+.gutter-col.active .gutter-handle {
+    width: 4px;
+    height: 40px;
+}
+
+.gutter-row:hover .gutter-handle,
+.gutter-row.active .gutter-handle {
+    height: 4px;
+    width: 40px;
+}
+
+/* While resizing, prevent selection and iframe/terminal pointer event capture */
+body.is-resizing {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+
+body.is-resizing-col {
+    cursor: col-resize !important;
+}
+
+body.is-resizing-row {
+    cursor: row-resize !important;
+}
+
+body.is-resizing #monacoEditor,
+body.is-resizing .output-body,
+body.is-resizing .guidance-body {
+    pointer-events: none !important;
+}
+
+/* =================================================================
+   RESPONSIVE DESIGN & MEDIA BREAKPOINTS
+   ================================================================= */
+
+/* ─── TABLET & LAPTOP COLLAPSE (< 900px) ────────────────────────── */
+@media (max-width: 900px) {
+    /* Practice Page: Switch from row to stacked column */
+    .practice-layout {
+        flex-direction: column !important;
+        overflow-y: auto !important;
+        height: auto !important;
+        min-height: calc(100vh - var(--header-height));
+    }
+
+    /* Problem statement stacks on top */
+    .problem-panel {
+        width: 100% !important;
+        max-height: 280px;
+        min-height: 180px;
+        flex-shrink: 0;
+        border-bottom: var(--border);
+        border-right: none;
+    }
+
+    /* Hide vertical gutter on stacked view */
+    #gutterProblem {
+        display: none !important;
+    }
+
+    /* Editor Section takes full width below problem panel */
+    .editor-section {
+        width: 100% !important;
+        min-height: 520px;
+        flex: none;
+    }
+
+    .editor-area {
+        height: 320px;
+        min-height: 260px;
+        flex: none;
+    }
+
+    .editor-footer {
+        flex-wrap: wrap;
+        height: auto;
+        padding: 8px 12px;
+        gap: 8px;
+    }
+
+    #gutterOutput {
+        display: none !important;
+    }
+
+    .panels-row {
+        height: auto !important;
+        min-height: 240px;
+        flex-direction: row;
+    }
+}
+
+/* ─── MOBILE PHONES & COMPACT SCREENS (< 768px) ─────────────────── */
+@media (max-width: 768px) {
+    /* Header optimization */
+    .site-header {
+        padding: 0 12px;
+        gap: 8px;
+    }
+
+    .brand-sub {
+        display: none;
+    }
+
+    .problem-title-header {
+        max-width: 160px;
+        font-size: 13px;
+    }
+
+    .student-badge {
+        padding: 4px 8px;
+        font-size: 12px;
+        gap: 5px;
+    }
+
+    .student-badge .s-sec {
+        display: none;
+    }
+
+    /* Problems List Page */
+    .problems-page {
+        padding: 16px 12px 40px;
+    }
+
+    .page-hero {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+        margin-bottom: 16px;
+    }
+
+    .hero-left h1 {
+        font-size: 20px;
+    }
+
+    .accordion-header {
+        padding: 12px 14px;
+        gap: 10px;
+    }
+
+    .accordion-topic-title-group {
+        gap: 6px;
+    }
+
+    .accordion-topic-name {
+        font-size: 14px;
+    }
+
+    .problem-row {
+        padding: 12px 14px;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .problem-row-left {
+        gap: 10px;
+        width: 100%;
+    }
+
+    .problem-row-right {
+        width: 100%;
+        justify-content: flex-start;
+        padding-left: 38px;
+    }
+}
+
+/* ─── EXTRA SMALL MOBILE (< 640px) ──────────────────────────────── */
+@media (max-width: 640px) {
+    /* Stack Output and Guidance panels vertically */
+    .panels-row {
+        flex-direction: column !important;
+    }
+
+    .output-panel {
+        border-right: none !important;
+        border-bottom: var(--border);
+        min-height: 180px;
+        max-height: 260px;
+    }
+
+    .guidance-panel {
+        min-height: 180px;
+    }
+
+    .problem-title-header {
+        max-width: 120px;
+    }
+
+    .footer-spacer {
+        display: none;
+    }
+
+    .editor-footer {
+        justify-content: space-between;
+    }
+}
+
+/* ─── ULTRA COMPACT (< 480px) ───────────────────────────────────── */
+@media (max-width: 480px) {
+    .problem-title-header,
+    .breadcrumb-sep {
+        display: none;
+    }
+
+    .back-link {
+        font-size: 12px;
+        padding: 4px 6px;
+    }
+
+    .btn-switch {
+        padding: 4px 8px;
+        font-size: 11.5px;
+    }
+
+    .btn-suggest-toggle,
+    .btn-theme-toggle {
+        width: 30px;
+        height: 30px;
+        font-size: 14px;
+    }
 }

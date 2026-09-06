@@ -76,7 +76,8 @@ def require_password_changed(student_id: int = Depends(get_current_student)) -> 
 
 
 def verify_admin(request: Request) -> bool:
-    client_ip = request.client.host if request.client else "unknown"
+    cf_ip = request.headers.get("CF-Connecting-IP")
+    client_ip = cf_ip.strip() if cf_ip else (request.client.host if request.client else "unknown")
     now = time.time()
 
     # Periodic cleanup of expired lockout entries

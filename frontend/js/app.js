@@ -75,14 +75,18 @@ let isPyodideReady = false;
 let activeInputEl = null;
 let pendingRunCode = null;
 const textEncoder = new TextEncoder();
+let suggestionsEnabled = localStorage.getItem('pymentor_suggestions_enabled') !== 'false';
 
 // ──────────────────────────────────────────────
 // INIT
 // ──────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+    restorePanelDimensions();
+    initResizablePanels();
     initMonaco();
     setupListeners();
     loadStudentIdentity();
+    await loadDefaultHelpLevel();
     initPyodideWorker();
     initHeartbeat();
 
@@ -115,7 +119,7 @@ function initPyodideWorker() {
     }
 
     try {
-        pyodideWorker = new Worker('/js/pyodide-worker.js?v=2.9');
+        pyodideWorker = new Worker('/js/pyodide-worker.js?v=3.1');
         pyodideWorker.postMessage({
             type: 'init',
             controlBuffer,
@@ -213,7 +217,10 @@ function promptForTerminalInput(promptText) {
         inputEl.style.width = Math.max(170, textLen * 8.5) + 'px';
     }
     adjustWidth();
-    inputEl.addEventListener('input', adjustWidth);
+    inputEl.addEventListener('input', () => {
+        adjustWidth();
+        startTimerOnActivity();
+    });
 
     // Handle Enter to submit input
     inputEl.addEventListener('keydown', (e) => {
@@ -266,6 +273,7 @@ function submitTerminalInput(inputEl) {
 // RUN CODE (EXECUTION & AUTO-SAVING)
 // ──────────────────────────────────────────────
 async function runCode() {
+    startTimerOnActivity();
     if (state.isRunning) return;
     if (!state.student) { requireAuth(); return; }
     if (!state.sessionId) { await startSession(); }
@@ -340,16 +348,23 @@ const monacoReadyPromise = new Promise((resolve) => {
     monacoReadyResolve = resolve;
 });
 
+let isProgrammaticEdit = false;
+
 async function setEditorCode(code) {
     if (typeof code !== 'string') return;
     state.pendingCode = code;
-    if (state.editor) {
-        state.editor.setValue(code);
-    } else {
-        await monacoReadyPromise;
+    isProgrammaticEdit = true;
+    try {
         if (state.editor) {
             state.editor.setValue(code);
+        } else {
+            await monacoReadyPromise;
+            if (state.editor) {
+                state.editor.setValue(code);
+            }
         }
+    } finally {
+        setTimeout(() => { isProgrammaticEdit = false; }, 100);
     }
 }
 
@@ -374,12 +389,18 @@ function initMonaco() {
             cursorBlinking: 'smooth',
             padding: { top: 12, bottom: 12 },
             wordWrap: 'off',
+            quickSuggestions: suggestionsEnabled,
+            suggestOnTriggerCharacters: suggestionsEnabled,
+            parameterHints: { enabled: suggestionsEnabled },
         });
 
         monacoReadyResolve(state.editor);
 
         // Auto-save code edits to localStorage on every change
         state.editor.onDidChangeModelContent(() => {
+            if (!isProgrammaticEdit) {
+                startTimerOnActivity();
+            }
             if (state.problemId) {
                 const currentCode = state.editor.getValue();
                 localStorage.setItem('pymentor_draft_' + state.problemId, currentCode);
@@ -407,9 +428,42 @@ function setupListeners() {
     };
     if (el.switchStudentBtn) el.switchStudentBtn.addEventListener('click', handleProfileClick);
     if (el.studentBadge) el.studentBadge.addEventListener('click', handleProfileClick);
-    el.levelSelect.addEventListener('change', () => {
+    if (el.levelSelect) el.levelSelect.addEventListener('change', () => {
         state.helpLevel = parseInt(el.levelSelect.value, 10);
     });
+
+    // Auto-suggestion toggle (💡)
+    const suggestToggleBtn = document.getElementById('suggestToggleBtn');
+    function updateSuggestBtnLabel() {
+        if (!suggestToggleBtn) return;
+        suggestToggleBtn.textContent = '💡';
+        if (suggestionsEnabled) {
+            suggestToggleBtn.classList.add('active');
+            suggestToggleBtn.classList.remove('inactive');
+            suggestToggleBtn.title = 'Code auto-suggestions: ON (Click to disable)';
+            suggestToggleBtn.setAttribute('aria-label', 'Code auto-suggestions: ON');
+        } else {
+            suggestToggleBtn.classList.remove('active');
+            suggestToggleBtn.classList.add('inactive');
+            suggestToggleBtn.title = 'Code auto-suggestions: OFF (Click to enable)';
+            suggestToggleBtn.setAttribute('aria-label', 'Code auto-suggestions: OFF');
+        }
+    }
+    if (suggestToggleBtn) {
+        updateSuggestBtnLabel();
+        suggestToggleBtn.addEventListener('click', () => {
+            suggestionsEnabled = !suggestionsEnabled;
+            localStorage.setItem('pymentor_suggestions_enabled', String(suggestionsEnabled));
+            if (state.editor) {
+                state.editor.updateOptions({
+                    quickSuggestions: suggestionsEnabled,
+                    suggestOnTriggerCharacters: suggestionsEnabled,
+                    parameterHints: { enabled: suggestionsEnabled },
+                });
+            }
+            updateSuggestBtnLabel();
+        });
+    }
     el.runBtn.addEventListener('click', runCode);
     el.guidanceBtn.addEventListener('click', getGuidance);
     el.copyInputBtn.addEventListener('click', () => {
@@ -450,6 +504,141 @@ function setupListeners() {
             activeInputEl.focus();
         }
     });
+
+    window.addEventListener('resize', () => {
+        if (state.editor) state.editor.layout();
+    }, { passive: true });
+}
+
+// ──────────────────────────────────────────────
+// RESIZABLE SPLIT PANELS
+// ──────────────────────────────────────────────
+function restorePanelDimensions() {
+    try {
+        const savedWidth = parseInt(localStorage.getItem('pymentor_problem_panel_width'), 10);
+        if (savedWidth && savedWidth >= 200 && savedWidth <= window.innerWidth - 300) {
+            document.documentElement.style.setProperty('--problem-panel-width', `${savedWidth}px`);
+        }
+        const savedHeight = parseInt(localStorage.getItem('pymentor_panels_height'), 10);
+        if (savedHeight && savedHeight >= 100 && savedHeight <= window.innerHeight - 150) {
+            document.documentElement.style.setProperty('--panels-height', `${savedHeight}px`);
+        }
+    } catch (e) {}
+}
+
+function initResizablePanels() {
+    const gutterProblem = document.getElementById('gutterProblem');
+    const gutterOutput = document.getElementById('gutterOutput');
+
+    // 1. Column Gutter (Problem panel width)
+    if (gutterProblem) {
+        gutterProblem.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            document.body.classList.add('is-resizing', 'is-resizing-col');
+            gutterProblem.classList.add('active');
+
+            let lastWidth = null;
+
+            const onMouseMove = (moveEvent) => {
+                const layout = document.querySelector('.practice-layout');
+                const layoutLeft = layout ? layout.getBoundingClientRect().left : 0;
+                const newWidth = moveEvent.clientX - layoutLeft;
+                const minWidth = 220;
+                const maxWidth = Math.max(minWidth, window.innerWidth - 420);
+                const clampedWidth = Math.min(Math.max(newWidth, minWidth), maxWidth);
+
+                lastWidth = clampedWidth;
+                document.documentElement.style.setProperty('--problem-panel-width', `${clampedWidth}px`);
+                if (state.editor) {
+                    state.editor.layout();
+                }
+            };
+
+            const onMouseUp = () => {
+                document.body.classList.remove('is-resizing', 'is-resizing-col');
+                gutterProblem.classList.remove('active');
+                window.removeEventListener('mousemove', onMouseMove);
+                window.removeEventListener('mouseup', onMouseUp);
+
+                if (lastWidth) {
+                    try {
+                        localStorage.setItem('pymentor_problem_panel_width', String(lastWidth));
+                    } catch (err) {}
+                }
+                if (state.editor) {
+                    state.editor.layout();
+                }
+            };
+
+            window.addEventListener('mousemove', onMouseMove);
+            window.addEventListener('mouseup', onMouseUp);
+        });
+
+        // Double click to reset to default 390px
+        gutterProblem.addEventListener('dblclick', () => {
+            document.documentElement.style.setProperty('--problem-panel-width', '390px');
+            try {
+                localStorage.removeItem('pymentor_problem_panel_width');
+            } catch (err) {}
+            if (state.editor) {
+                state.editor.layout();
+            }
+        });
+    }
+
+    // 2. Row Gutter (Terminal & Guidance panels height)
+    if (gutterOutput) {
+        gutterOutput.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            document.body.classList.add('is-resizing', 'is-resizing-row');
+            gutterOutput.classList.add('active');
+
+            let lastHeight = null;
+
+            const onMouseMove = (moveEvent) => {
+                const newHeight = window.innerHeight - moveEvent.clientY;
+                const minHeight = 120;
+                const maxHeight = Math.max(minHeight, window.innerHeight - 250);
+                const clampedHeight = Math.min(Math.max(newHeight, minHeight), maxHeight);
+
+                lastHeight = clampedHeight;
+                document.documentElement.style.setProperty('--panels-height', `${clampedHeight}px`);
+                if (state.editor) {
+                    state.editor.layout();
+                }
+            };
+
+            const onMouseUp = () => {
+                document.body.classList.remove('is-resizing', 'is-resizing-row');
+                gutterOutput.classList.remove('active');
+                window.removeEventListener('mousemove', onMouseMove);
+                window.removeEventListener('mouseup', onMouseUp);
+
+                if (lastHeight) {
+                    try {
+                        localStorage.setItem('pymentor_panels_height', String(lastHeight));
+                    } catch (err) {}
+                }
+                if (state.editor) {
+                    state.editor.layout();
+                }
+            };
+
+            window.addEventListener('mousemove', onMouseMove);
+            window.addEventListener('mouseup', onMouseUp);
+        });
+
+        // Double click to reset to default 260px
+        gutterOutput.addEventListener('dblclick', () => {
+            document.documentElement.style.setProperty('--panels-height', '260px');
+            try {
+                localStorage.removeItem('pymentor_panels_height');
+            } catch (err) {}
+            if (state.editor) {
+                state.editor.layout();
+            }
+        });
+    }
 }
 
 // ──────────────────────────────────────────────
@@ -458,7 +647,41 @@ function setupListeners() {
 function loadStudentIdentity() {
     state.student = requireAuth();
     if (!state.student) return;
+
+    // Initialize default guidance level from student's saved preference
+    const defaultLevel = parseInt(state.student.default_help_level, 10) || 1;
+    state.helpLevel = defaultLevel;
+    if (el.levelSelect) {
+        el.levelSelect.value = String(defaultLevel);
+    }
+
     updateStudentDisplay();
+}
+
+async function loadDefaultHelpLevel() {
+    if (!state.student) return;
+    try {
+        const res = await apiFetch('/api/student/profile');
+        if (res.ok) {
+            const data = await res.json();
+            const lvl = data.student?.default_help_level;
+            if (lvl && lvl >= 1 && lvl <= 3) {
+                const currentLocal = parseInt(state.student.default_help_level, 10) || 1;
+                if (state.helpLevel === currentLocal) {
+                    state.helpLevel = lvl;
+                    if (el.levelSelect) el.levelSelect.value = String(lvl);
+                }
+                state.student.default_help_level = lvl;
+                try {
+                    const localStudent = JSON.parse(localStorage.getItem('pymentor_student') || '{}');
+                    localStudent.default_help_level = lvl;
+                    localStorage.setItem('pymentor_student', JSON.stringify(localStudent));
+                } catch (e) {}
+            }
+        }
+    } catch (e) {
+        // Fall back gracefully
+    }
 }
 
 function updateStudentDisplay() {
@@ -521,6 +744,12 @@ function renderProblem(p) {
         setEditorCode('# Write your Python code here\n\n');
     }
 
+    // Reset problem status indicators
+    if (el.guidanceStatus) {
+        el.guidanceStatus.className = 'status-pending';
+        el.guidanceStatus.textContent = 'Pending';
+    }
+
     document.title = p.title + ' | Python Practice';
 }
 
@@ -559,9 +788,12 @@ async function startSession() {
 
         if (session.is_solved) {
             el.guidanceStatus.innerHTML = '<span class="status-solved">Solved &#10003;</span>';
+        } else {
+            el.guidanceStatus.className = 'status-pending';
+            el.guidanceStatus.textContent = 'Pending';
         }
 
-        // Initialize practice timer
+        // Initialize practice timer (ticks once student interacts)
         startActiveTimer(session.time_spent_seconds || 0, session.is_solved);
     } catch (err) { console.error('Session error:', err); }
 }
@@ -576,6 +808,7 @@ function updateAttemptDisplay() {
 // GET GUIDANCE (calls /api/session/submit)
 // ──────────────────────────────────────────────
 async function getGuidance() {
+    startTimerOnActivity();
     if (state.isGuidanceLoading) return;
     if (!state.student) { requireAuth(); return; }
     if (!state.sessionId) { await startSession(); }
@@ -627,10 +860,14 @@ async function getGuidance() {
 
         if (result.is_correct) {
             isProblemCurrentlySolved = true;
+            isTimerStarted = false;
+            if (activeTimerInterval) {
+                clearInterval(activeTimerInterval);
+                activeTimerInterval = null;
+            }
             if (result.time_spent_seconds) {
                 currentSessionSeconds = result.time_spent_seconds;
             }
-            if (activeTimerInterval) clearInterval(activeTimerInterval);
             updateTimerDisplay();
             el.guidanceStatus.innerHTML = '<span class="status-solved">Solved &#10003;</span>';
             triggerConfetti();
@@ -677,15 +914,17 @@ function initHeartbeat() {
         state.editor.onDidChangeModelContent(markActive);
     }
 
-    // Check & send heartbeat every 15 seconds
+    // Check & send heartbeat every 20 seconds
     if (heartbeatInterval) clearInterval(heartbeatInterval);
-    heartbeatInterval = setInterval(sendHeartbeat, 15000);
+    heartbeatInterval = setInterval(sendHeartbeat, 20000);
 
     // Re-anchor clock when returning to tab
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) {
             markActive();
-            sendHeartbeat();
+            if (isTimerStarted && !isProblemCurrentlySolved) {
+                sendHeartbeat();
+            }
         }
     });
 }
@@ -694,9 +933,12 @@ async function sendHeartbeat() {
     // Only send heartbeat if:
     // 1. Student is logged in with active session
     // 2. Tab is currently visible/focused
-    // 3. User interacted in the last 60 seconds (not idle/away)
+    // 3. Problem is not already solved
+    // 4. Timer has started on user activity
+    // 5. User interacted in the last 60 seconds (not idle/away)
     if (!state.student || !state.sessionId) return;
     if (document.hidden) return;
+    if (isProblemCurrentlySolved || !isTimerStarted) return;
     if (Date.now() - lastUserActivityTime > 60000) return;
 
     try {
@@ -709,7 +951,16 @@ async function sendHeartbeat() {
         });
         if (res.ok) {
             const data = await res.json();
-            if (data.total_time_spent && !isProblemCurrentlySolved) {
+            if (data.status === 'completed') {
+                isProblemCurrentlySolved = true;
+                isTimerStarted = false;
+                if (activeTimerInterval) {
+                    clearInterval(activeTimerInterval);
+                    activeTimerInterval = null;
+                }
+                updateTimerDisplay();
+                if (el.solvedBadge) el.solvedBadge.classList.remove('hidden');
+            } else if (data.total_time_spent && !isProblemCurrentlySolved) {
                 currentSessionSeconds = data.total_time_spent;
                 updateTimerDisplay();
             }
@@ -725,24 +976,45 @@ async function sendHeartbeat() {
 let activeTimerInterval = null;
 let currentSessionSeconds = 0;
 let isProblemCurrentlySolved = false;
+let isTimerStarted = false;
 
 function startActiveTimer(initialSeconds, isSolved) {
     currentSessionSeconds = initialSeconds || 0;
     isProblemCurrentlySolved = Boolean(isSolved);
+    isTimerStarted = false;
+
+    if (activeTimerInterval) {
+        clearInterval(activeTimerInterval);
+        activeTimerInterval = null;
+    }
+
     updateTimerDisplay();
 
-    if (activeTimerInterval) clearInterval(activeTimerInterval);
-
-    // Only keep ticking if problem not yet solved
-    if (!isProblemCurrentlySolved) {
-        activeTimerInterval = setInterval(() => {
-            // Tick when tab is active and user has interacted in last 60s
-            if (!document.hidden && (Date.now() - lastUserActivityTime <= 60000)) {
-                currentSessionSeconds++;
-                updateTimerDisplay();
-            }
-        }, 1000);
+    if (isProblemCurrentlySolved) {
+        if (el.solvedBadge) el.solvedBadge.classList.remove('hidden');
+    } else {
+        if (el.solvedBadge) el.solvedBadge.classList.add('hidden');
     }
+}
+
+function startTimerOnActivity() {
+    if (isProblemCurrentlySolved || isTimerStarted) return;
+    isTimerStarted = true;
+    lastUserActivityTime = Date.now();
+
+    if (activeTimerInterval) clearInterval(activeTimerInterval);
+    activeTimerInterval = setInterval(() => {
+        if (isProblemCurrentlySolved) {
+            clearInterval(activeTimerInterval);
+            activeTimerInterval = null;
+            return;
+        }
+        // Tick when tab is active and user has interacted in last 60s
+        if (!document.hidden && (Date.now() - lastUserActivityTime <= 60000)) {
+            currentSessionSeconds++;
+            updateTimerDisplay();
+        }
+    }, 1000);
 }
 
 function updateTimerDisplay() {
@@ -758,6 +1030,6 @@ function updateTimerDisplay() {
     } else {
         el.timeCounter.textContent = `⏱ ${timeStr}`;
         el.timeCounter.className = 'time-pill';
-        el.timeCounter.title = `Active practice time: ${timeStr}`;
+        el.timeCounter.title = isTimerStarted ? `Active practice time: ${timeStr}` : `Practice time (starts on activity): ${timeStr}`;
     }
 }

@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Practice | Python Practice</title>
     <meta name="description" content="Write and test Python code with step-by-step guidance.">
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="alternate icon" href="/favicon.ico">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=4">
+    <link rel="alternate icon" href="/favicon.ico?v=4">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -29,8 +29,8 @@
             } catch (e) {}
         })();
     </script>
-    <script type="module" src="/js/shared/theme.js"></script>
-    <link rel="stylesheet" href="/css/style.css?v=2.8">
+    <script type="module" src="/js/shared/theme.js?v=2.1"></script>
+    <link rel="stylesheet" href="/css/style.css?v=3.1">
 </head>
 <body class="practice-body">
 
@@ -40,6 +40,7 @@
         <span class="breadcrumb-sep">/</span>
         <span class="problem-title-header" id="headerProblemTitle">Loading...</span>
         <div class="header-spacer"></div>
+        <button id="suggestToggleBtn" class="btn-suggest-toggle" aria-label="Toggle code suggestions" title="Auto-suggestions: ON (Click to disable)">💡</button>
         <button id="themeToggleBtn" class="btn-theme-toggle" onclick="window.toggleTheme()" aria-label="Toggle theme" title="Toggle theme">🌙</button>
         <div id="studentBadge" class="student-badge" title="Click to update details">
             <span>🎓</span>
@@ -95,6 +96,11 @@
             </div>
         </aside>
 
+        <!-- Vertical Resizer Gutter between Problem Panel and Editor -->
+        <div id="gutterProblem" class="gutter gutter-col" role="separator" aria-orientation="vertical" title="Drag to resize problem panel">
+            <div class="gutter-handle"></div>
+        </div>
+
         <!-- Right: Editor + Panels -->
         <section class="editor-section">
             <!-- Monaco Editor -->
@@ -121,6 +127,11 @@
                     <span id="guidanceText">Get Guidance</span>
                     <div class="spinner hidden" id="guidanceSpinner"></div>
                 </button>
+            </div>
+
+            <!-- Horizontal Resizer Gutter between Editor and Output/Guidance Console -->
+            <div id="gutterOutput" class="gutter gutter-row" role="separator" aria-orientation="horizontal" title="Drag to resize terminal & guidance">
+                <div class="gutter-handle"></div>
             </div>
 
             <!-- Dual Panels -->
@@ -155,6 +166,6 @@
 
 
 
-    <script type="module" src="/js/app.js?v=2.9"></script>
+    <script type="module" src="/js/app.js?v=3.6"></script>
 </body>
 </html>

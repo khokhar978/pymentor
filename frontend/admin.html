@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PyMentor | Admin Operations & Telemetry</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="alternate icon" href="/favicon.ico">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=4">
+    <link rel="alternate icon" href="/favicon.ico?v=4">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/css/style.css">
     <style>
@@ -190,6 +190,14 @@
         .logout-btn:hover { background: rgba(239, 68, 68, 0.1); }
         
         .hidden { display: none !important; }
+
+        @media (max-width: 768px) {
+            .admin-layout { padding: 1rem; }
+            .admin-header h1 { font-size: 1.35rem; }
+            .admin-header { flex-direction: column; align-items: flex-start; gap: 1rem; }
+            .metric-grid { grid-template-columns: 1fr; }
+            .table-search input { width: 100%; }
+        }
     </style>
 </head>
 <body>

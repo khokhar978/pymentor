@@ -77,6 +77,7 @@ def init_db():
         section TEXT NOT NULL,
         password TEXT NOT NULL DEFAULT '123',
         needs_password_change INTEGER DEFAULT 1,
+        default_help_level INTEGER DEFAULT 1,
         created_at TIMESTAMP DEFAULT (datetime('now', 'localtime')),
         UNIQUE(roll_no, section)
     );
@@ -84,6 +85,11 @@ def init_db():
 
     try:
         cursor.execute("ALTER TABLE students ADD COLUMN needs_password_change INTEGER DEFAULT 1")
+    except Exception:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE students ADD COLUMN default_help_level INTEGER DEFAULT 1")
     except Exception:
         pass
 

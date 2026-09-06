@@ -52,7 +52,7 @@ def login_student(req: LoginRequest, request: Request):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT id, name, section, roll_no, password, needs_password_change FROM students WHERE roll_no = ? AND section = ?",
+        "SELECT id, name, section, roll_no, password, needs_password_change, default_help_level FROM students WHERE roll_no = ? AND section = ?",
         (roll_no, section)
     )
     student = cursor.fetchone()
@@ -81,6 +81,11 @@ def login_student(req: LoginRequest, request: Request):
         if ("needs_password_change" in student.keys() and student["needs_password_change"] is not None)
         else verify_password("123", student["password"])
     )
+    default_help_level = (
+        student["default_help_level"]
+        if ("default_help_level" in student.keys() and student["default_help_level"])
+        else 1
+    )
     conn.close()
 
     log_event(student_id=student["id"], event_type="login", event_data={"section": section, "roll_no": roll_no})
@@ -92,7 +97,8 @@ def login_student(req: LoginRequest, request: Request):
         "roll_no": student["roll_no"],
         "section": student["section"],
         "token": token,
-        "needs_password_change": needs_password_change
+        "needs_password_change": needs_password_change,
+        "default_help_level": default_help_level
     }
 
 

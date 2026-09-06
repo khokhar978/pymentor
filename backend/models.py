@@ -25,7 +25,6 @@ class SessionStartRequest(BaseModel):
 class SessionSaveRequest(BaseModel):
     session_id: int
     code: str = Field(..., max_length=20000)
-    time_spent_seconds: Optional[int] = None
     is_run: Optional[bool] = True
 
 
@@ -49,3 +48,7 @@ class TelemetryEventRequest(BaseModel):
     problem_id: Optional[int] = None
     event_type: str
     event_data: Optional[dict] = None
+
+
+class UpdateSettingsRequest(BaseModel):
+    default_help_level: int = Field(..., ge=1, le=3)

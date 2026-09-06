@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Student Login | Python Practice</title>
     <meta name="description" content="Sign in to your Python Practice BCA Lab account to track your progress and solve programming problems.">
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="alternate icon" href="/favicon.ico">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=4">
+    <link rel="alternate icon" href="/favicon.ico?v=4">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -20,7 +20,7 @@
         })();
     </script>
     <script type="module" src="/js/shared/theme.js"></script>
-    <link rel="stylesheet" href="/css/style.css?v=2.8">
+    <link rel="stylesheet" href="/css/style.css?v=3.1">
     <style>
         .login-page-wrapper {
             min-height: calc(100vh - var(--header-height) - 60px);
@@ -203,12 +203,24 @@
         .login-nav-link a:hover {
             text-decoration: underline;
         }
+
+        @media (max-width: 480px) {
+            .login-card {
+                padding: 24px 18px;
+            }
+            .login-header h2 {
+                font-size: 20px;
+            }
+            .login-header p {
+                font-size: 13px;
+            }
+        }
     </style>
 </head>
 <body>
     <header class="site-header">
         <a href="/problems" class="header-brand">
-            <span class="brand-icon">🐍</span>
+            <img src="/favicon.svg" alt="PyMentor" class="brand-icon-img">
             <span>Python Practice</span>
             <span class="brand-sub">BCA Lab</span>
         </a>
@@ -222,7 +234,7 @@
     <main class="login-page-wrapper">
         <div class="login-card">
             <div class="login-header">
-                <div class="login-logo">🎓</div>
+                <div class="login-logo"><img src="/favicon.svg" alt="PyMentor" style="width: 38px; height: 38px; border-radius: 8px;"></div>
                 <h1 class="login-title">Student Lab Login</h1>
                 <p class="login-subtitle">Sign in with your assigned details to access lab problems and keep your progress synced.</p>
             </div>

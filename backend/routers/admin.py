@@ -190,8 +190,8 @@ def get_admin_dashboard(admin: bool = Depends(verify_admin)):
 
     conn.close()
 
-    # System Metrics via psutil
-    cpu_percent = psutil.cpu_percent(interval=0.1)
+    # System Metrics via psutil (non-blocking)
+    cpu_percent = psutil.cpu_percent(interval=None)
     memory = psutil.virtual_memory()
     disk = psutil.disk_usage('/')
 
