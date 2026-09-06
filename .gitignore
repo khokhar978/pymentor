@@ -7,3 +7,4 @@ pymentor.db
 *.db-shm
 logs.txt
 *.log
+chat_logs_export.*

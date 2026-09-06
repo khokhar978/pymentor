@@ -237,20 +237,6 @@ def submit_code(req: SubmitCodeRequest, student_id: int = Depends(require_passwo
             if state.submit_cooldowns[sid] < cutoff:
                 del state.submit_cooldowns[sid]
 
-    code = req.code.strip()
-    if not code:
-        raise HTTPException(status_code=400, detail="Please write your Python code before requesting guidance!")
-
-    # Component 1: Require a real run before guidance is allowed
-    # This guarantees the AI always has real terminal output to work with,
-    # directly targeting the 49% empty simulated_output stat from the log export.
-    if not req.simulated_output or not req.simulated_output.strip():
-        raise HTTPException(
-            status_code=400,
-            detail="Please run your code at least once before requesting guidance. "
-                   "The AI mentor needs to see what your code actually does."
-        )
-
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -266,6 +252,22 @@ def submit_code(req: SubmitCodeRequest, student_id: int = Depends(require_passwo
     if not session:
         conn.close()
         raise HTTPException(status_code=404, detail="Session not found or not authorized")
+
+    code = req.code.strip()
+    if not code:
+        conn.close()
+        raise HTTPException(status_code=400, detail="Please write your Python code before requesting guidance!")
+
+    # Component 1: Require a real run before guidance is allowed
+    # This guarantees the AI always has real terminal output to work with,
+    # directly targeting the 49% empty simulated_output stat from the log export.
+    if not req.simulated_output or not req.simulated_output.strip():
+        conn.close()
+        raise HTTPException(
+            status_code=400,
+            detail="Please run your code at least once before requesting guidance. "
+                   "The AI mentor needs to see what your code actually does."
+        )
 
     problem_id = session["problem_id"]
     help_level = req.help_level or session["help_level"]
