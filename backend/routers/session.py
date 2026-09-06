@@ -241,6 +241,16 @@ def submit_code(req: SubmitCodeRequest, student_id: int = Depends(require_passwo
     if not code:
         raise HTTPException(status_code=400, detail="Please write your Python code before requesting guidance!")
 
+    # Component 1: Require a real run before guidance is allowed
+    # This guarantees the AI always has real terminal output to work with,
+    # directly targeting the 49% empty simulated_output stat from the log export.
+    if not req.simulated_output or not req.simulated_output.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Please run your code at least once before requesting guidance. "
+                   "The AI mentor needs to see what your code actually does."
+        )
+
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -261,10 +271,12 @@ def submit_code(req: SubmitCodeRequest, student_id: int = Depends(require_passwo
     help_level = req.help_level or session["help_level"]
 
     cursor.execute("""
-    SELECT title, topic, difficulty, description, sample_input, sample_output, ai_rubric
+    SELECT title, topic, difficulty, description, sample_input, sample_output, ai_rubric,
+           COALESCE(reference_solution, '') as reference_solution
     FROM problems WHERE id = ?
     """, (problem_id,))
     problem = dict(cursor.fetchone())
+    problem['id'] = problem_id  # Ensure id is available for logging in ai_mentor
 
     cursor.execute("""
     SELECT attempt_number, code, ai_response, is_correct
@@ -291,10 +303,16 @@ def submit_code(req: SubmitCodeRequest, student_id: int = Depends(require_passwo
     feedback = eval_result["feedback"]
     model_used = eval_result.get("model_used", "")
 
+    # Component 7: Don't pollute future prompts with raw infra error strings.
+    # If the AI call failed (network/quota), store a neutral placeholder in the DB
+    # for future prompt history — the student still sees the friendly retry message.
+    store_as_placeholder = eval_result.get("store_as_placeholder", False)
+    db_ai_response = eval_result.get("placeholder_text", feedback) if store_as_placeholder else feedback
+
     cursor.execute("""
     INSERT INTO submissions (session_id, code, ai_response, is_correct, attempt_number, model_used, simulated_output, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
-    """, (req.session_id, code, feedback, is_correct, attempt_number, model_used, req.simulated_output or ""))
+    """, (req.session_id, code, db_ai_response, is_correct, attempt_number, model_used, req.simulated_output or ""))
 
     if is_correct:
         cursor.execute("UPDATE sessions SET status = 'solved', last_code = ?, updated_at = datetime('now', 'localtime') WHERE id = ?", (code, req.session_id,))

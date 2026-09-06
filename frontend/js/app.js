@@ -20,6 +20,7 @@ const state = {
     isRunning:        false,
     isGuidanceLoading: false,
     lastOutput:       null,
+    lastRunCode:      null,  // Component 1: code snapshot at the moment the last run completed
     editor:           null,
     pendingCode:      null
 };
@@ -338,6 +339,9 @@ function finishExecution(hasError) {
 
     // Capture complete terminal content for AI Mentor context
     state.lastOutput = el.outputBody.innerText.trim();
+    // Component 1: Record the exact code that was run so we can detect edits
+    state.lastRunCode = state.editor ? state.editor.getValue() : null;
+    updateGuidanceBtnState();
 }
 
 // ──────────────────────────────────────────────
@@ -405,6 +409,10 @@ function initMonaco() {
                 const currentCode = state.editor.getValue();
                 localStorage.setItem('pymentor_draft_' + state.problemId, currentCode);
             }
+            // Component 1: Re-evaluate guidance button state whenever code changes
+            if (!isProgrammaticEdit) {
+                updateGuidanceBtnState();
+            }
         });
 
         // Ctrl+Enter = Run
@@ -412,6 +420,38 @@ function initMonaco() {
             if (!state.isRunning) runCode();
         });
     });
+}
+
+// ──────────────────────────────────────────────
+// COMPONENT 1: GUIDANCE BUTTON GATE
+// Disable "Get Guidance" when code has changed since last run.
+// The AI mentor needs real terminal output — this ensures it always has it.
+// ──────────────────────────────────────────────
+function updateGuidanceBtnState() {
+    if (!el.guidanceBtn || state.isGuidanceLoading) return;
+
+    const currentCode = state.editor ? state.editor.getValue().trim() : '';
+
+    // No run has been performed at all yet
+    if (state.lastRunCode === null) {
+        el.guidanceBtn.disabled = true;
+        el.guidanceBtn.title = 'Run your code first so I can see what it actually does.';
+        if (el.guidanceText) el.guidanceText.textContent = 'Run First';
+        return;
+    }
+
+    // Code changed since the last run
+    if (currentCode !== state.lastRunCode.trim()) {
+        el.guidanceBtn.disabled = true;
+        el.guidanceBtn.title = 'Run your updated code first so I can see what it actually does.';
+        if (el.guidanceText) el.guidanceText.textContent = 'Run First';
+        return;
+    }
+
+    // Code matches last run — guidance is allowed
+    el.guidanceBtn.disabled = false;
+    el.guidanceBtn.title = 'Get AI mentor guidance on your current code';
+    if (el.guidanceText) el.guidanceText.textContent = 'Get Guidance';
 }
 
 // ──────────────────────────────────────────────
@@ -810,6 +850,9 @@ async function startSession() {
 
         // Initialize practice timer (ticks once student interacts)
         startActiveTimer(session.time_spent_seconds || 0, session.is_solved);
+
+        // Component 1: Initialize guidance button state (disabled until code is run)
+        updateGuidanceBtnState();
     } catch (err) { console.error('Session error:', err); }
 }
 
@@ -895,9 +938,10 @@ async function getGuidance() {
         el.guidanceStatus.textContent = 'Error';
     } finally {
         state.isGuidanceLoading = false;
-        el.guidanceBtn.disabled      = false;
-        el.guidanceText.textContent  = 'Get Guidance';
         el.guidanceSpinner.classList.add('hidden');
+        // Component 1: Re-check whether guidance button should be enabled
+        // (code may have changed while guidance was loading — don't blindly re-enable)
+        updateGuidanceBtnState();
     }
 }
 

@@ -65,9 +65,16 @@ def init_db():
         sample_output TEXT NOT NULL,
         concepts TEXT NOT NULL,
         starter_code TEXT DEFAULT '',
-        ai_rubric TEXT NOT NULL
+        ai_rubric TEXT NOT NULL,
+        reference_solution TEXT DEFAULT ''
     );
     """)
+
+    # Ensure reference_solution exists in existing databases (Component 4 migration)
+    try:
+        cursor.execute("ALTER TABLE problems ADD COLUMN reference_solution TEXT DEFAULT ''")
+    except Exception:
+        pass
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS students (

@@ -5,6 +5,7 @@ context-aware progression tracking, and 3 Socratic guidance levels.
 
 import os
 import re
+import difflib
 import logging
 from typing import Dict, Any, List, Optional
 from dotenv import load_dotenv
@@ -44,6 +45,48 @@ def get_client():
 
 
 # ─────────────────────────────────────────────
+# COMPONENT 2: DETERMINISTIC CRASH DETECTION
+# ─────────────────────────────────────────────
+
+_CRASH_PATTERNS = [
+    r"Traceback \(most recent call last\)",
+    r"\b\w*Error\b:",          # ValueError:, TypeError:, SyntaxError:, NameError:, etc.
+    r"\b\w*Exception\b:",
+]
+
+def detect_crash(simulated_output: str) -> bool:
+    """
+    Deterministic check: does the terminal output contain a Python crash signature?
+    Pure pattern-matching, no AI involvement. Returns True if a crash is detected.
+    This is used to hard-override any AI 'SOLVED' verdict when the code actually crashed.
+    """
+    if not simulated_output or not simulated_output.strip():
+        return False
+    return any(re.search(pattern, simulated_output) for pattern in _CRASH_PATTERNS)
+
+
+# ─────────────────────────────────────────────
+# COMPONENT 3: STRUCTURAL SIMILARITY SCORE
+# ─────────────────────────────────────────────
+
+def normalize_output(text: str) -> str:
+    """Normalize output for structural comparison: strip whitespace variants, lowercase."""
+    text = text.strip()
+    text = re.sub(r'[ \t]+', ' ', text)       # collapse repeated spaces/tabs
+    text = re.sub(r'\n{2,}', '\n', text)       # collapse repeated blank lines
+    return text.lower()
+
+def similarity_score(expected: str, actual: str) -> float:
+    """
+    Compute structural similarity (0–100%) between expected sample output and
+    actual terminal output. Advisory only — handed to the AI as evidence,
+    not used as a hard gate, because valid solutions with different inputs
+    will legitimately differ from sample text.
+    """
+    a, b = normalize_output(expected), normalize_output(actual)
+    if not a or not b:
+        return 0.0
+    return round(difflib.SequenceMatcher(None, a, b).ratio() * 100, 1)
 
 
 # ─────────────────────────────────────────────
@@ -66,9 +109,10 @@ def build_prompt(
     }
     help_level_desc = level_names.get(help_level, level_names[1])
 
+    # COMPONENT 6: History is context for narrative only — not for verdict
     history_text = ""
     if history:
-        history_text += "\n--- PREVIOUS ATTEMPTS IN THIS SESSION ---\n"
+        history_text += "\n--- PREVIOUS ATTEMPTS IN THIS SESSION (for context / acknowledging progress ONLY) ---\n"
         for idx, item in enumerate(history, 1):
             history_text += f"\n[Attempt #{item.get('attempt_number', idx)}]\n"
             history_text += f"Student Code:\n```python\n{item.get('code', '')}\n```\n"
@@ -87,34 +131,54 @@ def build_prompt(
             "Cross-check: if the actual output EXACTLY matches the expected sample output, strongly lean toward [STATUS: SOLVED].\n"
         )
 
-    level_instructions = ""
-    if help_level == 1:
-        level_instructions = (
-            "\nHELP LEVEL 1 INSTRUCTIONS (Baby Steps):\n"
+    # COMPONENT 3: Similarity score as soft evidence
+    sim_score_section = ""
+    if simulated_output and problem.get("sample_output"):
+        score = similarity_score(problem["sample_output"], simulated_output)
+        sim_score_section = (
+            "\n=== OUTPUT SIMILARITY TO SAMPLE (computed, not your judgment) ===\n"
+            f"{score}% structural match against the expected sample output.\n"
+            "(This score ignores exact names/numbers since those legitimately vary — "
+            "treat it as one signal among several, not a verdict.)\n\n"
+        )
+
+    # COMPONENT 4: Reference solution as grounding context (if provided)
+    reference_section = ""
+    ref_solution = problem.get("reference_solution", "")
+    if ref_solution and ref_solution.strip():
+        reference_section = (
+            "\n=== REFERENCE SOLUTION (for your understanding only — NEVER show this to the student, "
+            "and do not penalize a different but valid approach) ===\n"
+            f"{ref_solution}\n\n"
+        )
+
+    # COMPONENT 5: Per-level instructions with genuinely different word budgets AND what gets revealed
+    level_instructions_map = {
+        1: (
+            "\nHELP LEVEL 1 INSTRUCTIONS (Baby Steps) — budget: up to 70 words.\n"
             "- Absolute beginner. Use simple, direct, encouraging English.\n"
-            "- Break down logic into single, bite-sized tasks.\n"
-            "- Reference specific line numbers for any error or gap.\n"
+            "- Quote the exact line number AND the exact expected-vs-actual value if available.\n"
+            "- Break the fix into one tiny, concrete next action.\n"
             "- ALWAYS describe the REAL-WORLD screen effect of the mistake.\n"
-            "- If simulated output is available, reference it: 'See, when you ran the code...'\n"
             "- Give a direct leading question or tiny hint so they can fix it.\n"
+            "- It is fine to be this explicit — the goal is momentum, not independence.\n"
             "- NEVER write out the full solution code!\n"
-        )
-    elif help_level == 2:
-        level_instructions = (
-            "\nHELP LEVEL 2 INSTRUCTIONS (Guided):\n"
-            "- Point to the specific line or logic block needing attention.\n"
-            "- Explain the practical symptom or conceptual gap, reference simulated output if available.\n"
-            "- Ask questions that lead them to inspect operators, logic, or edge cases.\n"
+        ),
+        2: (
+            "\nHELP LEVEL 2 INSTRUCTIONS (Guided) — budget: up to 45 words.\n"
+            "- Name WHICH concept or section is off (e.g. 'your discount calculation'), "
+            "but do NOT quote the exact line number or exact expected value.\n"
+            "- Ask one question that requires the student to locate the issue themselves.\n"
             "- Acknowledge what they fixed and move to the next problem.\n"
-        )
-    else:
-        level_instructions = (
-            "\nHELP LEVEL 3 INSTRUCTIONS (Challenge):\n"
-            "- Minimal nudges only.\n"
-            "- If simulated output is available, point to it and let student reason from it.\n"
-            "- Point out the failing scenario without revealing the fix.\n"
-            "- Let the student debug their own syntax and flow.\n"
-        )
+        ),
+        3: (
+            "\nHELP LEVEL 3 INSTRUCTIONS (Challenge) — budget: up to 25 words.\n"
+            "- State only THAT something is wrong and in which general area (input handling / "
+            "logic / output formatting) — no specifics, no line numbers, no line-level hints.\n"
+            "- Let the similarity score and their own output be their only real clue.\n"
+        ),
+    }
+    level_instructions = level_instructions_map.get(help_level, level_instructions_map[1])
 
     prompt = (
         "You are a clear, patient, and encouraging computer science teacher and lab mentor "
@@ -127,7 +191,6 @@ def build_prompt(
         "=== TEACHER INSTRUCTIONS ===\n"
         "1. Do NOT write the complete working solution code.\n"
         "2. RESPONSE STYLE:\n"
-        "   - Entire response body (EXCLUDING the STATUS line) must be UNDER 80 WORDS. Count carefully.\n"
         "   - No fluff or generic filler.\n"
         "   - ALWAYS explain the PRACTICAL EFFECT of the mistake (what the student sees on screen).\n"
         "   - If simulated output is provided, ALWAYS reference the actual values that appeared.\n"
@@ -138,6 +201,12 @@ def build_prompt(
         "6. Evaluate if the code fully solves the problem:\n"
         "   - FULLY CORRECT: First line must be `[STATUS: SOLVED]` then concise praise (max 2 sentences).\n"
         "   - NOT CORRECT/INCOMPLETE: First line must be `[STATUS: IN_PROGRESS]` then guidance.\n\n"
+        # COMPONENT 6: Explicit instruction to not anchor verdict on history
+        "=== CRITICAL: VERDICT SOURCE OF TRUTH ===\n"
+        "Your [STATUS] verdict must be based ONLY on the CURRENT attempt's code and CURRENT "
+        "simulated output below — never on what a previous attempt looked like. "
+        "Use the attempt history ONLY to acknowledge progress in your praise/feedback text, "
+        "never to inform whether this attempt is correct.\n\n"
         f"=== PROBLEM ===\n"
         f"Title: {problem['title']}\n"
         f"Topic: {problem['topic']}\n"
@@ -146,8 +215,10 @@ def build_prompt(
         f"Sample Input:\n{problem['sample_input']}\n\n"
         f"Sample Output:\n{problem['sample_output']}\n\n"
         f"=== RUBRIC ===\n{problem['ai_rubric']}\n\n"
+        f"{reference_section}"
         f"=== GUIDANCE LEVEL ===\n{help_level_desc}\n{level_instructions}\n"
         f"{run_output_section}"
+        f"{sim_score_section}"
         f"{history_text}\n"
         f"=== STUDENT'S CURRENT CODE (Attempt #{len(history) + 1}) ===\n"
         f"```python\n{current_code}\n```\n\n"
@@ -159,6 +230,10 @@ def build_prompt(
 # ─────────────────────────────────────────────
 # EVALUATE CODE
 # ─────────────────────────────────────────────
+
+# Placeholder text for failed API calls stored in history
+# COMPONENT 7: Don't pollute future prompts with raw error strings
+_FAILED_ATTEMPT_PLACEHOLDER = "(A temporary issue prevented feedback on this attempt.)"
 
 def evaluate_code(
     student_name: str,
@@ -175,7 +250,8 @@ def evaluate_code(
             "is_correct": False,
             "feedback": "**API key not configured.** Please contact your instructor.",
             "model_used": "none",
-            "error": "API_KEY_MISSING"
+            "error": "API_KEY_MISSING",
+            "store_as_placeholder": False
         }
 
     prompt = build_prompt(
@@ -217,11 +293,22 @@ def evaluate_code(
                     is_correct = False
                     feedback_text = re.sub(r"\[?STATUS:\s*IN_PROGRESS\]?", "", raw_text).strip()
 
+            # COMPONENT 2: Hard crash override — AI cannot mark a crashing submission as SOLVED
+            crashed = detect_crash(simulated_output)
+            if crashed and is_correct:
+                logger.warning(
+                    f"[CRASH-OVERRIDE] AI marked SOLVED on a crashing output — verdict overridden to IN_PROGRESS. "
+                    f"problem={problem.get('id', '?')}, model={model_name}"
+                )
+                is_correct = False
+                # Keep the AI's feedback text — it's usually still useful explanation of what went wrong
+
             return {
                 "is_correct": is_correct,
                 "feedback": feedback_text,
                 "model_used": model_name,
-                "error": None
+                "error": None,
+                "store_as_placeholder": False
             }
         except Exception as e:
             error_str = str(e)
@@ -236,5 +323,8 @@ def evaluate_code(
         "is_correct": False,
         "feedback": "AI guidance is temporarily unavailable. Please wait a few moments and click **Get Guidance** again.",
         "model_used": "failed",
-        "error": "AI service temporarily unavailable"
+        "error": "AI service temporarily unavailable",
+        # COMPONENT 7: Signal to caller to store placeholder in DB instead of error text
+        "store_as_placeholder": True,
+        "placeholder_text": _FAILED_ATTEMPT_PLACEHOLDER
     }
