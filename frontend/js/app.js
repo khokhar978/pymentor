@@ -76,7 +76,7 @@ let isPyodideReady = false;
 let activeInputEl = null;
 let pendingRunCode = null;
 const textEncoder = new TextEncoder();
-let suggestionsEnabled = localStorage.getItem('pymentor_suggestions_enabled') !== 'false';
+let suggestionsEnabled = localStorage.getItem('pymentor_suggestions_enabled') === 'true';
 
 // ──────────────────────────────────────────────
 // INIT
@@ -396,6 +396,8 @@ function initMonaco() {
             quickSuggestions: suggestionsEnabled,
             suggestOnTriggerCharacters: suggestionsEnabled,
             parameterHints: { enabled: suggestionsEnabled },
+            snippetSuggestions: suggestionsEnabled ? 'bottom' : 'none',
+            wordBasedSuggestions: suggestionsEnabled ? 'matchingDocuments' : 'off',
         });
 
         monacoReadyResolve(state.editor);
@@ -499,6 +501,8 @@ function setupListeners() {
                     quickSuggestions: suggestionsEnabled,
                     suggestOnTriggerCharacters: suggestionsEnabled,
                     parameterHints: { enabled: suggestionsEnabled },
+                    snippetSuggestions: suggestionsEnabled ? 'bottom' : 'none',
+                    wordBasedSuggestions: suggestionsEnabled ? 'matchingDocuments' : 'off',
                 });
             }
             updateSuggestBtnLabel();
