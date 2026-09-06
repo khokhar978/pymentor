@@ -85,13 +85,22 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchProfileData(student.token);
 });
 
+// Re-fetch profile analytics when returning to the profile dashboard via browser back/forward cache (bfcache)
+window.addEventListener('pageshow', (event) => {
+    if (event.persisted) {
+        const student = requireAuth('/login');
+        if (student) fetchProfileData(student.token);
+    }
+});
+
 async function fetchProfileData(token) {
     try {
         const res = await fetch('/api/student/profile', {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${token}`
-            }
+            },
+            cache: 'no-store'
         });
 
         if (!res.ok) {

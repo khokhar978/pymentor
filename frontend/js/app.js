@@ -516,8 +516,10 @@ function setupListeners() {
 function restorePanelDimensions() {
     try {
         const savedWidth = parseInt(localStorage.getItem('pymentor_problem_panel_width'), 10);
-        if (savedWidth && savedWidth >= 200 && savedWidth <= window.innerWidth - 300) {
-            document.documentElement.style.setProperty('--problem-panel-width', `${savedWidth}px`);
+        if (savedWidth && savedWidth >= 220) {
+            const maxWidth = Math.max(220, window.innerWidth - 420);
+            const clamped = Math.min(savedWidth, maxWidth);
+            document.documentElement.style.setProperty('--problem-panel-width', `${clamped}px`);
         }
         const savedHeight = parseInt(localStorage.getItem('pymentor_panels_height'), 10);
         if (savedHeight && savedHeight >= 100 && savedHeight <= window.innerHeight - 150) {
@@ -525,6 +527,19 @@ function restorePanelDimensions() {
         }
     } catch (e) {}
 }
+
+window.addEventListener('resize', () => {
+    if (window.innerWidth >= 900) {
+        const currentWidth = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--problem-panel-width'), 10);
+        if (currentWidth) {
+            const maxWidth = Math.max(220, window.innerWidth - 420);
+            if (currentWidth > maxWidth) {
+                document.documentElement.style.setProperty('--problem-panel-width', `${maxWidth}px`);
+                if (state.editor) state.editor.layout();
+            }
+        }
+    }
+}, { passive: true });
 
 function initResizablePanels() {
     const gutterProblem = document.getElementById('gutterProblem');
@@ -959,7 +974,7 @@ async function sendHeartbeat() {
                     activeTimerInterval = null;
                 }
                 updateTimerDisplay();
-                if (el.solvedBadge) el.solvedBadge.classList.remove('hidden');
+                if (el.guidanceStatus) el.guidanceStatus.innerHTML = '<span class="status-solved">Solved &#10003;</span>';
             } else if (data.total_time_spent && !isProblemCurrentlySolved) {
                 currentSessionSeconds = data.total_time_spent;
                 updateTimerDisplay();
@@ -989,12 +1004,6 @@ function startActiveTimer(initialSeconds, isSolved) {
     }
 
     updateTimerDisplay();
-
-    if (isProblemCurrentlySolved) {
-        if (el.solvedBadge) el.solvedBadge.classList.remove('hidden');
-    } else {
-        if (el.solvedBadge) el.solvedBadge.classList.add('hidden');
-    }
 }
 
 function startTimerOnActivity() {

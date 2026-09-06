@@ -105,8 +105,8 @@ def test_pages_and_static_routes():
     practice_html = client.get("/practice").text
     assert 'id="gutterProblem"' in practice_html, "Gutter problem separator missing on /practice"
     assert 'id="gutterOutput"' in practice_html, "Gutter output separator missing on /practice"
-    assert 'id="solvedBadge"' in practice_html, "Solved badge element missing on /practice"
-    print("  [OK] All 6 static pages, favicons, ES modules, theme toggles, resizable gutters, and solved badge serve valid responses")
+    assert 'id="guidanceStatus"' in practice_html, "Guidance status indicator element missing on /practice"
+    print("  [OK] All 6 static pages, favicons, ES modules, theme toggles, resizable gutters, and guidance status serve valid responses")
 
 # ─────────────────────────────────────────────────────────────
 # 2. BROWSER COOP/COEP SECURITY HEADERS
@@ -557,15 +557,43 @@ def test_cross_student_idor():
 # ─────────────────────────────────────────────────────────────
 def test_admin_lockout_and_rate_limiting():
     """Verify that multiple failed admin attempts trigger a 15-minute brute-force lockout (HTTP 429),
-    totally blocking that IP even if a valid secret is sent later, while keeping localhost/other IPs unblocked."""
+    totally blocking that IP even if a valid secret is sent later. Also verifies that direct connections
+    cannot evade lockout by spoofing CF-Connecting-IP headers, and authentic Cloudflare edge requests
+    correctly isolate visitor IPs."""
     test_ip = "203.0.113.10"
     state.admin_attempts.pop(test_ip, None)
+    state.admin_attempts.pop("testclient", None)
     state.admin_attempts.pop("127.0.0.1", None)
 
     try:
-        # Send 5 incorrect attempts from test_ip using CF-Connecting-IP
+        # 1. DIRECT CONNECTION SPOOFING PREVENTION:
+        # An attacker sends 5 incorrect attempts with different fake CF-Connecting-IP headers.
+        # Since the TCP peer is direct (not a Cloudflare edge proxy), CF-Connecting-IP is ignored
+        # and the peer IP ('testclient') is tracked.
         for i in range(1, 6):
             res = client.get("/api/admin/dashboard", headers={
+                "X-Admin-Secret": f"wrong_secret_{i}",
+                "CF-Connecting-IP": f"fake.ip.{i}.99"
+            })
+            assert res.status_code == 401, f"Expected 401 on attempt {i}, got {res.status_code}"
+
+        # 6th attempt with another new fake IP: STILL locked out (HTTP 429) because peer IP is locked
+        spoof_lock_res = client.get("/api/admin/dashboard", headers={
+            "X-Admin-Secret": "wrong_secret_6",
+            "CF-Connecting-IP": "fake.ip.6.99"
+        })
+        assert spoof_lock_res.status_code == 429, "Direct client should be locked out despite rotating CF-Connecting-IP headers"
+        assert "Locked out for" in spoof_lock_res.json()["detail"]
+        print("  [OK] Direct connections cannot bypass lockout by rotating fake CF-Connecting-IP headers (HTTP 429)")
+
+        # Clear testclient lockout for subsequent tests
+        state.admin_attempts.pop("testclient", None)
+
+        # 2. AUTHENTIC CLOUDFLARE EDGE CONNECTION:
+        # Peer connects from a legitimate Cloudflare IP (e.g. 173.245.48.5)
+        cf_client = TestClient(app, client=("173.245.48.5", 50000))
+        for i in range(1, 6):
+            res = cf_client.get("/api/admin/dashboard", headers={
                 "X-Admin-Secret": f"wrong_secret_{i}",
                 "CF-Connecting-IP": test_ip
             })
@@ -573,8 +601,8 @@ def test_admin_lockout_and_rate_limiting():
 
         print("  [OK] 5 consecutive failed admin attempts from Cloudflare IP rejected (HTTP 401)")
 
-        # 6th attempt with wrong secret: locked out (HTTP 429)
-        lockout_res = client.get("/api/admin/dashboard", headers={
+        # 6th attempt with wrong secret from same visitor IP: locked out (HTTP 429)
+        lockout_res = cf_client.get("/api/admin/dashboard", headers={
             "X-Admin-Secret": "wrong_secret_6",
             "CF-Connecting-IP": test_ip
         })
@@ -583,23 +611,25 @@ def test_admin_lockout_and_rate_limiting():
         print("  [OK] 6th failed attempt triggers 15-minute lockout (HTTP 429)")
 
         # 7th attempt with VALID secret from the locked-out IP: STILL blocked (total IP block)
-        locked_valid_res = client.get("/api/admin/dashboard", headers={
+        locked_valid_res = cf_client.get("/api/admin/dashboard", headers={
             "X-Admin-Secret": ADMIN_SECRET,
             "CF-Connecting-IP": test_ip
         })
         assert locked_valid_res.status_code == 429, f"Expected 429 on locked IP even with valid secret, got {locked_valid_res.status_code}"
         print("  [OK] Locked-out IP is totally blocked even if valid secret is sent (HTTP 429)")
 
-        # Request with VALID secret from localhost (127.0.0.1): succeeds (HTTP 200)
-        local_res = client.get("/api/admin/dashboard", headers={
+        # Request with VALID secret from a different visitor IP via Cloudflare: succeeds (HTTP 200)
+        other_cf_res = cf_client.get("/api/admin/dashboard", headers={
             "X-Admin-Secret": ADMIN_SECRET,
-            "CF-Connecting-IP": "127.0.0.1"
+            "CF-Connecting-IP": "198.51.100.42"
         })
-        assert local_res.status_code == 200, f"Expected 200 from localhost, got {local_res.status_code}"
-        print("  [OK] Localhost/unblocked IP can still access admin dashboard with valid secret (HTTP 200)")
+        assert other_cf_res.status_code == 200, f"Expected 200 from unblocked visitor IP, got {other_cf_res.status_code}"
+        print("  [OK] Other visitor IPs via Cloudflare can still access admin dashboard with valid secret (HTTP 200)")
 
     finally:
         state.admin_attempts.pop(test_ip, None)
+        state.admin_attempts.pop("testclient", None)
+        state.admin_attempts.pop("198.51.100.42", None)
         state.admin_attempts.pop("127.0.0.1", None)
 
 

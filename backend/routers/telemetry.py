@@ -2,7 +2,7 @@
 Student telemetry events and profile performance analytics.
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Response
 
 try:
     from pymentor.backend.database import get_connection, log_event
@@ -39,7 +39,8 @@ def record_telemetry(req: TelemetryEventRequest, student_id: int = Depends(get_c
 
 
 @router.get("/student/profile")
-def get_profile(student_id: int = Depends(get_current_student)):
+def get_profile(response: Response, student_id: int = Depends(get_current_student)):
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT id, name, roll_no, section, default_help_level FROM students WHERE id = ?", (student_id,))

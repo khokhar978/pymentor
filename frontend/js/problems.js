@@ -17,6 +17,14 @@ document.addEventListener('DOMContentLoaded', () => {
     loadAll();
 });
 
+// Re-fetch progress when returning to the problems dashboard via browser back/forward cache (bfcache)
+window.addEventListener('pageshow', (event) => {
+    if (event.persisted) {
+        setupStudentUI();
+        loadAll();
+    }
+});
+
 // ── STUDENT AUTHENTICATION ────────────────────────
 function setupStudentUI() {
     const student = getCurrentStudent();
@@ -113,7 +121,8 @@ async function loadAll() {
     if (student && student.token) {
         try {
             const progRes = await fetch('/api/student/progress', {
-                headers: { 'Authorization': 'Bearer ' + student.token }
+                headers: { 'Authorization': 'Bearer ' + student.token },
+                cache: 'no-store'
             });
             if (progRes.ok) {
                 const progData = await progRes.json();
@@ -135,10 +144,22 @@ async function loadAll() {
             return;
         }
 
-        // 3. Render accordion list
+        // 3. Render accordion list, preserving open accordion states across re-renders
+        const openAccordionIds = new Set(
+            Array.from(container.querySelectorAll('.topic-accordion.open')).map(acc => acc.id)
+        );
+
         container.innerHTML = '';
         allTopicsData.forEach((t, idx) => {
-            container.appendChild(renderTopicAccordion(t, idx));
+            const acc = renderTopicAccordion(t, idx);
+            if (openAccordionIds.has(acc.id) || areAllExpanded) {
+                acc.classList.add('open');
+                const h = acc.querySelector('.accordion-header');
+                const b = acc.querySelector('.accordion-body');
+                if (h) { h.classList.add('open'); h.setAttribute('aria-expanded', 'true'); }
+                if (b) { b.classList.add('open'); }
+            }
+            container.appendChild(acc);
         });
     } catch (err) {
         container.innerHTML = '<p style="color:var(--error);font-size:13px; padding: 20px;">Failed to load problems: ' + esc(err.message) + '</p>';

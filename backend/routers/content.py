@@ -3,7 +3,7 @@ Problem, topic, and curriculum content endpoints.
 """
 
 import json
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Response
 
 try:
     from pymentor.backend.database import get_connection
@@ -44,7 +44,7 @@ def get_topics():
 
 
 @router.get("/student/progress")
-def get_student_progress(student_id: int = Depends(get_current_student)):
+def get_student_progress(response: Response, student_id: int = Depends(get_current_student)):
     """
     Returns per-problem progress status and time spent for the logged-in student.
     Each problem is classified as:
@@ -52,6 +52,7 @@ def get_student_progress(student_id: int = Depends(get_current_student)):
       - 'attempted'   : has sessions/submissions but no correct submission
       - 'not_started' : no sessions at all
     """
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
