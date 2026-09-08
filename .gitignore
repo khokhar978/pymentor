@@ -10,3 +10,6 @@ logs.txt
 chat_logs_export.*
 *.xlsx
 New Text Document.txt
+questions_data_for_claude.*
+questions_refactor_prompt_for_claude.*
+backups/

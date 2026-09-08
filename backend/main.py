@@ -14,10 +14,12 @@ from fastapi.staticfiles import StaticFiles
 try:
     from pymentor.backend import config, state
     from pymentor.backend.database import init_db
+    from pymentor.backend.github_backup import sync_from_github_on_startup, backup_to_github
     from pymentor.backend.routers import pages, content, auth, session, telemetry, admin
 except ImportError:
     from backend import config, state
     from backend.database import init_db
+    from backend.github_backup import sync_from_github_on_startup, backup_to_github
     from backend.routers import pages, content, auth, session, telemetry, admin
 
 # Configure basic file logging to logs.txt
@@ -49,7 +51,10 @@ class AdminHeartbeatFilter(logging.Filter):
 
 logging.getLogger("uvicorn.access").addFilter(AdminHeartbeatFilter())
 
-# Initialize database schema and seeds
+# 1. Synchronize latest database from Host/GitHub if newer backup exists
+sync_from_github_on_startup()
+
+# 2. Initialize database schema, column migrations, and tables
 init_db()
 
 # Create FastAPI application
@@ -66,9 +71,18 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=config.ALLOWED_ORIGINS,
     allow_origin_regex=config.ALLOWED_ORIGIN_REGEX,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Admin-Secret"],
 )
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    """Create a clean hot backup and sync to GitHub upon server shutdown."""
+    try:
+        backup_to_github()
+    except Exception as e:
+        logger.warning(f"Shutdown backup error: {e}")
 
 
 @app.middleware("http")

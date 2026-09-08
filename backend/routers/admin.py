@@ -7,6 +7,7 @@ import time
 import json
 import psutil
 from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi.responses import FileResponse
 
 try:
     from pymentor.backend.config import ENV_PATH
@@ -21,6 +22,9 @@ try:
     from pymentor.backend.database import get_connection, hash_password
     from pymentor.backend.ai_mentor import FALLBACK_MODELS, get_api_key
     from pymentor.backend.quota_manager import get_quota_summary
+    from pymentor.backend.github_backup import (
+        backup_to_github, list_backups, get_latest_local_backup, sync_from_github_on_startup, is_github_configured
+    )
 except ImportError:
     from backend.config import ENV_PATH
     from backend.models import (
@@ -34,6 +38,9 @@ except ImportError:
     from backend.database import get_connection, hash_password
     from backend.ai_mentor import FALLBACK_MODELS, get_api_key
     from backend.quota_manager import get_quota_summary
+    from backend.github_backup import (
+        backup_to_github, list_backups, get_latest_local_backup, sync_from_github_on_startup, is_github_configured
+    )
 
 router = APIRouter(prefix="/api", tags=["admin"])
 
@@ -965,3 +972,49 @@ def delete_student(student_id: int, hard: bool = Query(False), admin: bool = Dep
         conn.commit()
         conn.close()
         return {"status": "deactivated", "id": student_id, "roll_no": student["roll_no"], "is_active": False}
+
+
+# ─────────────────────────────────────────────
+# BACKUP & FAILOVER SYNC (GITHUB & LOCAL DOWNLOAD)
+# ─────────────────────────────────────────────
+
+@router.post("/admin/backup")
+def trigger_backup(admin: bool = Depends(verify_admin)):
+    """
+    Creates an instant, non-blocking hot backup of pymentor.db.
+    Uploads snapshot to private GitHub repository if configured in .env.
+    """
+    result = backup_to_github()
+    return result
+
+
+@router.get("/admin/backup/download")
+def download_backup(admin: bool = Depends(verify_admin)):
+    """
+    Directly streams the newest SQLite database backup file to the client browser or cURL.
+    Allows downloading the live database to a laptop with one click.
+    """
+    path = get_latest_local_backup()
+    if not path or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="No database backup file found")
+    filename = os.path.basename(path)
+    return FileResponse(
+        path=path,
+        filename=filename,
+        media_type="application/x-sqlite3"
+    )
+
+
+@router.get("/admin/backup/status")
+def backup_status(admin: bool = Depends(verify_admin)):
+    """Lists local and GitHub backup archives with dates and sizes."""
+    return list_backups()
+
+
+@router.post("/admin/backup/restore-github")
+@router.post("/admin/backup/restore")
+def force_restore_github(admin: bool = Depends(verify_admin)):
+    """Manually pull and restore the latest database from GitHub or peer host."""
+    sync_from_github_on_startup()
+    return {"status": "success", "message": "Synchronized latest database from GitHub/Host."}
+
