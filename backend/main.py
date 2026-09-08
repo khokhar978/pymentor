@@ -21,12 +21,21 @@ except ImportError:
     from backend.routers import pages, content, auth, session, telemetry, admin
 
 # Configure basic file logging to logs.txt
+class SafeStreamHandler(logging.StreamHandler):
+    """StreamHandler that safely handles Windows [Errno 22] Invalid argument when flushed to redirected pipes/files."""
+    def flush(self):
+        try:
+            if self.stream and hasattr(self.stream, "flush") and not getattr(self.stream, "closed", False):
+                self.stream.flush()
+        except OSError:
+            pass
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler(config.LOG_FILE_PATH),
-        logging.StreamHandler()
+        logging.FileHandler(config.LOG_FILE_PATH, encoding="utf-8"),
+        SafeStreamHandler()
     ]
 )
 logger = logging.getLogger("pymentor")

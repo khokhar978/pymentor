@@ -274,7 +274,8 @@ def submit_code(req: SubmitCodeRequest, student_id: int = Depends(require_passwo
 
     cursor.execute("""
     SELECT title, topic, difficulty, description, sample_input, sample_output, ai_rubric,
-           COALESCE(reference_solution, '') as reference_solution
+           COALESCE(reference_solution, '') as reference_solution,
+           COALESCE(teacher_instructions, '') as teacher_instructions
     FROM problems WHERE id = ?
     """, (problem_id,))
     problem = dict(cursor.fetchone())

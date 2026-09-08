@@ -66,7 +66,10 @@ def init_db():
         concepts TEXT NOT NULL,
         starter_code TEXT DEFAULT '',
         ai_rubric TEXT NOT NULL,
-        reference_solution TEXT DEFAULT ''
+        reference_solution TEXT DEFAULT '',
+        teacher_instructions TEXT DEFAULT '',
+        is_active INTEGER DEFAULT 1,
+        order_index INTEGER DEFAULT 0
     );
     """)
 
@@ -76,19 +79,65 @@ def init_db():
     except Exception:
         pass
 
+    # Ensure teacher_instructions exists in existing databases
+    try:
+        cursor.execute("ALTER TABLE problems ADD COLUMN teacher_instructions TEXT DEFAULT ''")
+    except Exception:
+        pass
+
+    # Ensure is_active and order_index exist in existing databases
+    try:
+        cursor.execute("ALTER TABLE problems ADD COLUMN is_active INTEGER DEFAULT 1")
+    except Exception:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE problems ADD COLUMN order_index INTEGER DEFAULT 0")
+    except Exception:
+        pass
+
+    # Topics table for modular curriculum management
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS topics (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE NOT NULL,
+        description TEXT DEFAULT '',
+        order_index INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT (datetime('now', 'localtime'))
+    );
+    """)
+
+    try:
+        cursor.execute("SELECT COUNT(*) as count FROM topics")
+        row = cursor.fetchone()
+        if row and row["count"] == 0:
+            cursor.execute("SELECT DISTINCT topic FROM problems ORDER BY id ASC")
+            for idx, r in enumerate(cursor.fetchall(), 1):
+                cursor.execute("INSERT OR IGNORE INTO topics (name, order_index) VALUES (?, ?)", (r["topic"], idx * 10))
+            conn.commit()
+    except Exception:
+        pass
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS students (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         roll_no TEXT NOT NULL,
         name TEXT NOT NULL,
         section TEXT NOT NULL,
+        email TEXT DEFAULT '',
         password TEXT NOT NULL DEFAULT '123',
         needs_password_change INTEGER DEFAULT 1,
         default_help_level INTEGER DEFAULT 1,
+        is_active INTEGER DEFAULT 1,
         created_at TIMESTAMP DEFAULT (datetime('now', 'localtime')),
         UNIQUE(roll_no, section)
     );
     """)
+
+    try:
+        cursor.execute("ALTER TABLE students ADD COLUMN email TEXT DEFAULT ''")
+    except Exception:
+        pass
 
     try:
         cursor.execute("ALTER TABLE students ADD COLUMN needs_password_change INTEGER DEFAULT 1")
@@ -97,6 +146,11 @@ def init_db():
 
     try:
         cursor.execute("ALTER TABLE students ADD COLUMN default_help_level INTEGER DEFAULT 1")
+    except Exception:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE students ADD COLUMN is_active INTEGER DEFAULT 1")
     except Exception:
         pass
 

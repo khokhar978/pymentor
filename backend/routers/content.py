@@ -22,7 +22,8 @@ def get_topics():
     cursor.execute("""
     SELECT id, topic, title, difficulty, concepts
     FROM problems
-    ORDER BY id ASC
+    WHERE COALESCE(is_active, 1) = 1
+    ORDER BY COALESCE(order_index, 0) ASC, id ASC
     """)
     rows = cursor.fetchall()
     conn.close()
@@ -104,7 +105,7 @@ def get_problem(problem_id: int):
     cursor.execute("""
     SELECT id, topic, title, difficulty, description, sample_input, sample_output, concepts, starter_code
     FROM problems
-    WHERE id = ?
+    WHERE id = ? AND COALESCE(is_active, 1) = 1
     """, (problem_id,))
     row = cursor.fetchone()
     conn.close()

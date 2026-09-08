@@ -8,3 +8,5 @@ pymentor.db
 logs.txt
 *.log
 chat_logs_export.*
+*.xlsx
+New Text Document.txt

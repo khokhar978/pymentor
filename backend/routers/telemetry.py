@@ -43,7 +43,7 @@ def get_profile(response: Response, student_id: int = Depends(get_current_studen
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, name, roll_no, section, default_help_level FROM students WHERE id = ?", (student_id,))
+    cursor.execute("SELECT id, name, roll_no, section, email, default_help_level FROM students WHERE id = ?", (student_id,))
     student = cursor.fetchone()
     if not student:
         conn.close()

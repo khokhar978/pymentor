@@ -32,6 +32,19 @@ def serve_favicon_svg():
     raise HTTPException(status_code=404, detail="Favicon not found")
 
 
+@router.get("/apple-touch-icon.png")
+@router.get("/apple-touch-icon-precomposed.png")
+def serve_apple_touch_icon():
+    """Serve favicon for iOS devices probing for apple-touch-icon."""
+    svg_file = os.path.join(FRONTEND_DIR, "favicon.svg")
+    if os.path.exists(svg_file):
+        return FileResponse(svg_file, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+    ico_file = os.path.join(FRONTEND_DIR, "favicon.ico")
+    if os.path.exists(ico_file):
+        return FileResponse(ico_file, media_type="image/x-icon", headers={"Cache-Control": "public, max-age=86400"})
+    raise HTTPException(status_code=404, detail="Icon not found")
+
+
 @router.get("/logo.svg")
 def serve_logo_svg():
     """Serve scalable vector logo.svg brand asset."""

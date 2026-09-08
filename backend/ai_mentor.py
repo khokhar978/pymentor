@@ -152,6 +152,15 @@ def build_prompt(
             f"{ref_solution}\n\n"
         )
 
+    # Teacher live instructions for this specific problem (if provided)
+    teacher_section = ""
+    teacher_instructions = problem.get("teacher_instructions", "")
+    if teacher_instructions and teacher_instructions.strip():
+        teacher_section = (
+            "=== INSTRUCTOR INSTRUCTIONS FOR THIS PROBLEM ===\n"
+            f"{teacher_instructions.strip()}\n\n"
+        )
+
     # COMPONENT 5: Per-level instructions with genuinely different word budgets AND what gets revealed
     level_instructions_map = {
         1: (
@@ -170,6 +179,7 @@ def build_prompt(
             "but do NOT quote the exact line number or exact expected value.\n"
             "- Ask one question that requires the student to locate the issue themselves.\n"
             "- Acknowledge what they fixed and move to the next problem.\n"
+            "- NEVER write out the full solution code!\n"
         ),
         3: (
             "\nHELP LEVEL 3 INSTRUCTIONS (Challenge) — budget: up to 25 words.\n"
@@ -215,6 +225,7 @@ def build_prompt(
         f"Sample Input:\n{problem['sample_input']}\n\n"
         f"Sample Output:\n{problem['sample_output']}\n\n"
         f"=== RUBRIC ===\n{problem['ai_rubric']}\n\n"
+        f"{teacher_section}"
         f"{reference_section}"
         f"=== GUIDANCE LEVEL ===\n{help_level_desc}\n{level_instructions}\n"
         f"{run_output_section}"
