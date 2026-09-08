@@ -29,8 +29,8 @@ GITHUB_TOKEN = os.environ.get("GITHUB_BACKUP_TOKEN", "").strip()
 GITHUB_REPO = os.environ.get("GITHUB_BACKUP_REPO", "").strip()  # e.g. "khokhar978/pymentor-backups"
 GITHUB_BRANCH = os.environ.get("GITHUB_BACKUP_BRANCH", "main").strip()
 
-# Optional: Direct peer server URL for instant laptop-to-host sync
-HOST_SERVER_URL = os.environ.get("HOST_SERVER_URL", "https://khokhar.in.net").strip()
+# Optional: Direct peer server URL for instant laptop-to-host sync (leave empty on host PC)
+HOST_SERVER_URL = os.environ.get("HOST_SERVER_URL", "").strip()
 ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "").strip()
 
 BACKUP_DIR = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "backups")
