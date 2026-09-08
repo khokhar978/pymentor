@@ -1,269 +1,277 @@
+/**
+ * PyMentor Admin Portal Modular Controller
+ * Multi-View SPA router, Problem Studio, Student Accounts, Live Lab, Exports & Telemetry
+ */
+
 import {
     escapeHtml,
     formatDuration,
-    parseLocalDate,
     formatLocalTime,
     formatLocalDateTime,
     formatLocalDateOnly
 } from './shared/utils.js';
 
 document.addEventListener('DOMContentLoaded', () => {
+    // ──────────────────────────────────────────────
+    // STATE & ROUTING
+    // ──────────────────────────────────────────────
+    const state = {
+        secret: localStorage.getItem('pymentor_admin_secret') || '',
+        activeView: 'viewOverview',
+        refreshInterval: null,
+        dashboardData: null,
+        studentsPage: 1,
+        studentsTotalPages: 1,
+        studentsSection: '',
+        studentsSearch: '',
+        topicsList: [],
+        problemsList: []
+    };
+
+    // DOM References
     const loginOverlay = document.getElementById('adminLoginOverlay');
-    const dashboardContent = document.getElementById('dashboardContent');
-    const loginForm = document.getElementById('adminLoginForm');
     const secretInput = document.getElementById('adminSecretInput');
+    const loginBtn = document.getElementById('adminLoginBtn');
     const loginError = document.getElementById('loginError');
-    const refreshBtn = document.getElementById('refreshBtn');
-    const logoutBtn = document.getElementById('logoutBtn');
+    const logoutBtn = document.getElementById('adminLogoutBtn');
+    const pageTitle = document.getElementById('pageTitle');
+    const navLinks = document.querySelectorAll('.sidebar-nav .nav-link');
+    const viewSections = document.querySelectorAll('.view-section');
 
-    // API Key Form elements
-    const apiStatusDot = document.getElementById('apiStatusDot');
-    const apiStatusTitle = document.getElementById('apiStatusTitle');
-    const apiStatusSub = document.getElementById('apiStatusSub');
-    const toggleKeyFormBtn = document.getElementById('toggleKeyFormBtn');
-    const apiKeyFormPanel = document.getElementById('apiKeyFormPanel');
-    const newApiKeyInput = document.getElementById('newApiKeyInput');
-    const saveApiKeyBtn = document.getElementById('saveApiKeyBtn');
-    const cancelKeyBtn = document.getElementById('cancelKeyBtn');
-    const apiKeyFeedback = document.getElementById('apiKeyFeedback');
-
-    // Roster elements
-    const rosterTableBody = document.getElementById('rosterTableBody');
-    const rosterCount = document.getElementById('rosterCount');
-    const rosterSearch = document.getElementById('rosterSearch');
-    const rosterSectionFilter = document.getElementById('rosterSectionFilter');
-
-    // Student Modal elements
+    // Modals & Drawers
     const studentModal = document.getElementById('studentModal');
-    const modalStudentName = document.getElementById('modalStudentName');
-    const modalStudentMeta = document.getElementById('modalStudentMeta');
-    const modalProblemsBody = document.getElementById('modalProblemsBody');
-    const modalEventsBody = document.getElementById('modalEventsBody');
-    const modalCloseBtn = document.getElementById('modalCloseBtn');
+    const problemDrawer = document.getElementById('problemDrawer');
+    const resetPwModal = document.getElementById('resetPasswordModal');
+    const bulkResetModal = document.getElementById('bulkResetModal');
+    const addStudentModal = document.getElementById('addStudentModal');
+    const topicModal = document.getElementById('topicModal');
+    const apiKeyModal = document.getElementById('apiKeyModal');
 
-    let allStudents = [];
-    let refreshInterval = null;
+    // ──────────────────────────────────────────────
+    // TOAST NOTIFICATIONS
+    // ──────────────────────────────────────────────
+    function showToast(message, type = 'success') {
+        const toast = document.getElementById('adminToast');
+        const toastMsg = document.getElementById('adminToastMsg');
+        const toastIcon = document.getElementById('adminToastIcon');
+        if (!toast || !toastMsg) return;
 
-    // Check if we have a saved secret
-    const savedSecret = localStorage.getItem('pymentor_admin_secret');
-    if (savedSecret) {
-        verifyAndLoad(savedSecret);
+        toastMsg.textContent = message;
+        toast.className = `show ${type}`;
+        toastIcon.textContent = type === 'success' ? '✓' : '✕';
+
+        setTimeout(() => {
+            toast.className = '';
+        }, 3200);
     }
 
-    loginForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const secret = secretInput.value.trim();
-        verifyAndLoad(secret);
-    });
-
-    logoutBtn.addEventListener('click', () => {
-        localStorage.removeItem('pymentor_admin_secret');
-        dashboardContent.classList.add('hidden');
-        loginOverlay.classList.remove('hidden');
-        secretInput.value = '';
-        if (refreshInterval) clearInterval(refreshInterval);
-    });
-
-    refreshBtn.addEventListener('click', () => {
-        const secret = localStorage.getItem('pymentor_admin_secret');
-        if (secret) fetchDashboardData(secret);
-    });
-
-    // API Key UI toggles
-    toggleKeyFormBtn.addEventListener('click', () => {
-        apiKeyFormPanel.classList.toggle('hidden');
-        apiKeyFeedback.style.display = 'none';
-        if (!apiKeyFormPanel.classList.contains('hidden')) {
-            newApiKeyInput.focus();
-        }
-    });
-
-    cancelKeyBtn.addEventListener('click', () => {
-        apiKeyFormPanel.classList.add('hidden');
-        newApiKeyInput.value = '';
-        apiKeyFeedback.style.display = 'none';
-    });
-
-    saveApiKeyBtn.addEventListener('click', async () => {
-        const secret = localStorage.getItem('pymentor_admin_secret');
-        const key = newApiKeyInput.value.trim();
-        if (!key) {
-            apiKeyFeedback.textContent = "Please enter a valid API key.";
-            apiKeyFeedback.style.color = "#ef4444";
-            apiKeyFeedback.style.display = "block";
+    // ──────────────────────────────────────────────
+    // AUTHENTICATION
+    // ──────────────────────────────────────────────
+    async function verifyAndInitialize(secret) {
+        if (!secret) {
+            loginOverlay.classList.remove('hidden');
             return;
         }
 
-        saveApiKeyBtn.disabled = true;
-        saveApiKeyBtn.textContent = "Saving...";
-
-        try {
-            const res = await fetch('/api/config/key', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Admin-Secret': secret
-                },
-                body: JSON.stringify({ api_key: key })
-            });
-
-            const data = await res.json();
-            if (res.ok) {
-                apiKeyFeedback.textContent = "✓ " + (data.message || "API Key updated successfully!");
-                apiKeyFeedback.style.color = "#10b981";
-                apiKeyFeedback.style.display = "block";
-                newApiKeyInput.value = '';
-                setTimeout(() => {
-                    apiKeyFormPanel.classList.add('hidden');
-                    apiKeyFeedback.style.display = "none";
-                    fetchDashboardData(secret);
-                }, 1200);
-            } else {
-                apiKeyFeedback.textContent = data.detail || "Failed to update API key.";
-                apiKeyFeedback.style.color = "#ef4444";
-                apiKeyFeedback.style.display = "block";
-            }
-        } catch (err) {
-            apiKeyFeedback.textContent = "Network error updating API key.";
-            apiKeyFeedback.style.color = "#ef4444";
-            apiKeyFeedback.style.display = "block";
-        } finally {
-            saveApiKeyBtn.disabled = false;
-            saveApiKeyBtn.textContent = "Save & Verify Key";
-        }
-    });
-
-    // Search & Filter in Roster
-    rosterSearch.addEventListener('input', () => renderRosterTable());
-    rosterSectionFilter.addEventListener('change', () => renderRosterTable());
-
-    // Modal Close
-    modalCloseBtn.addEventListener('click', () => {
-        studentModal.classList.add('hidden');
-    });
-
-    studentModal.addEventListener('click', (e) => {
-        if (e.target === studentModal) {
-            studentModal.classList.add('hidden');
-        }
-    });
-
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && !studentModal.classList.contains('hidden')) {
-            studentModal.classList.add('hidden');
-        }
-    });
-
-    async function verifyAndLoad(secret) {
         try {
             const res = await fetch('/api/status', {
                 headers: { 'X-Admin-Secret': secret }
             });
             if (res.ok) {
+                state.secret = secret;
                 localStorage.setItem('pymentor_admin_secret', secret);
                 loginOverlay.classList.add('hidden');
-                dashboardContent.classList.remove('hidden');
                 loginError.style.display = 'none';
-                fetchDashboardData(secret);
-                
-                if (refreshInterval) clearInterval(refreshInterval);
-                // Auto refresh every 10 seconds
-                refreshInterval = setInterval(() => fetchDashboardData(secret), 10000);
+
+                initPortal();
             } else {
                 localStorage.removeItem('pymentor_admin_secret');
-                loginError.style.display = 'block';
+                state.secret = '';
                 loginOverlay.classList.remove('hidden');
-                dashboardContent.classList.add('hidden');
+                loginError.textContent = "Invalid Admin Secret Key.";
+                loginError.style.display = 'block';
             }
-        } catch (e) {
-            loginError.textContent = "Cannot connect to server.";
+        } catch (err) {
+            loginOverlay.classList.remove('hidden');
+            loginError.textContent = "Cannot connect to PyMentor backend.";
             loginError.style.display = 'block';
         }
     }
 
-    async function fetchDashboardData(secret) {
+    loginBtn.addEventListener('click', () => {
+        const key = secretInput.value.trim();
+        verifyAndInitialize(key);
+    });
+
+    secretInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') loginBtn.click();
+    });
+
+    logoutBtn.addEventListener('click', () => {
+        localStorage.removeItem('pymentor_admin_secret');
+        state.secret = '';
+        if (state.refreshInterval) clearInterval(state.refreshInterval);
+        loginOverlay.classList.remove('hidden');
+        secretInput.value = '';
+    });
+
+    // ──────────────────────────────────────────────
+    // HASH ROUTER
+    // ──────────────────────────────────────────────
+    const routeTitles = {
+        '#overview': 'Operations Overview',
+        '#problems': 'Problem Studio & Curriculum',
+        '#topics': 'Topics & Module Management',
+        '#students': 'Student Account Directory',
+        '#lab': 'Active Lab Command Center',
+        '#export': 'Exports & Disaster Recovery',
+        '#system': 'AI & System Configuration'
+    };
+
+    const routeViews = {
+        '#overview': 'viewOverview',
+        '#problems': 'viewProblems',
+        '#topics': 'viewTopics',
+        '#students': 'viewStudents',
+        '#lab': 'viewLab',
+        '#export': 'viewExport',
+        '#system': 'viewSystem'
+    };
+
+    function handleRoute() {
+        const hash = window.location.hash || '#overview';
+        const targetViewId = routeViews[hash] || 'viewOverview';
+        const targetTitle = routeTitles[hash] || 'Operations Overview';
+
+        state.activeView = targetViewId;
+        pageTitle.textContent = targetTitle;
+
+        // Update nav active link
+        navLinks.forEach(link => {
+            if (link.getAttribute('href') === hash) {
+                link.classList.add('active');
+            } else {
+                link.classList.remove('active');
+            }
+        });
+
+        // Switch visible view panel
+        viewSections.forEach(sec => {
+            if (sec.id === targetViewId) {
+                sec.classList.add('active');
+            } else {
+                sec.classList.remove('active');
+            }
+        });
+
+        // View-specific on-demand data load
+        if (targetViewId === 'viewProblems') loadProblemsView();
+        else if (targetViewId === 'viewTopics') loadTopicsView();
+        else if (targetViewId === 'viewStudents') loadStudentsView();
+        else if (targetViewId === 'viewExport') loadBackupsView();
+        else if (targetViewId === 'viewSystem') loadRateLimitConfig();
+    }
+
+    window.addEventListener('hashchange', handleRoute);
+
+    // ──────────────────────────────────────────────
+    // PORTAL INITIALIZATION
+    // ──────────────────────────────────────────────
+    function initPortal() {
+        handleRoute();
+        fetchOverviewData();
+
+        // 10-second background polling for real-time overview & lab
+        if (state.refreshInterval) clearInterval(state.refreshInterval);
+        state.refreshInterval = setInterval(() => {
+            fetchOverviewData(true);
+        }, 10000);
+
+        setupEventListeners();
+    }
+
+    // ──────────────────────────────────────────────
+    // VIEW 1: OVERVIEW & TELEMETRY
+    // ──────────────────────────────────────────────
+    async function fetchOverviewData(isBackground = false) {
+        if (!state.secret) return;
         try {
             const res = await fetch('/api/admin/dashboard', {
-                headers: { 'X-Admin-Secret': secret }
+                headers: { 'X-Admin-Secret': state.secret }
             });
             if (res.ok) {
                 const data = await res.json();
-                renderDashboard(data);
-                document.getElementById('lastUpdated').textContent = "Updated: " + new Date().toLocaleTimeString();
+                state.dashboardData = data;
+                renderOverview(data);
+                renderLiveLab(data.online_students || []);
+                renderSystemQuotas(data.model_quotas || []);
             } else if (res.status === 401) {
-                logoutBtn.click(); // invalid secret
+                logoutBtn.click();
             }
-        } catch (e) {
-            console.error("Dashboard fetch error:", e);
+        } catch (err) {
+            if (!isBackground) console.error("Error fetching admin dashboard:", err);
         }
     }
 
-    function renderDashboard(data) {
-        // API Key Status Banner
+    function renderOverview(data) {
+        // Topbar Gemini Status
         const keyStatus = data.api_key_status || {};
+        const topApiKeyDot = document.getElementById('topApiKeyDot');
+        const topApiKeyText = document.getElementById('topApiKeyText');
         if (keyStatus.has_key) {
-            apiStatusDot.className = 'api-status-dot dot-green';
-            apiStatusTitle.textContent = `Gemini API: Active (${keyStatus.masked_key})`;
-            apiStatusSub.textContent = "AI Mentor & Code Simulator ready for student queries.";
+            topApiKeyDot.className = 'pulse-dot';
+            topApiKeyText.textContent = `Gemini: Active (${keyStatus.masked_key})`;
         } else {
-            apiStatusDot.className = 'api-status-dot dot-red';
-            apiStatusTitle.textContent = "Gemini API: Not Configured";
-            apiStatusSub.textContent = "Click 'Change API Key' to configure your key and enable AI evaluations.";
+            topApiKeyDot.className = 'pulse-dot';
+            topApiKeyDot.style.background = 'var(--admin-rose)';
+            topApiKeyDot.style.boxShadow = 'none';
+            topApiKeyText.textContent = 'Gemini: Not Configured';
         }
 
-        // Platform Metrics
+        // Platform metrics
         document.getElementById('valStudents').textContent = data.metrics.total_students || 0;
         const onlineCount = data.metrics.total_online || (data.online_students ? data.online_students.length : 0);
-        const valOnlineEl = document.getElementById('valOnline');
-        if (valOnlineEl) valOnlineEl.textContent = onlineCount;
+        document.getElementById('valOnline').textContent = onlineCount;
+        document.getElementById('sidebarOnlineBadge').textContent = onlineCount;
 
         document.getElementById('valRuns').textContent = data.metrics.total_runs || 0;
         document.getElementById('valSubmissions').textContent = data.metrics.total_submissions || 0;
         document.getElementById('valSolved').textContent = data.metrics.total_solved || 0;
-        
+
         let rate = 0;
         if (data.metrics.total_submissions > 0) {
             rate = Math.round((data.metrics.total_solved / data.metrics.total_submissions) * 100);
         }
         document.getElementById('valRate').textContent = rate + '%';
 
-        // Real-Time Online Students Table
-        renderOnlineStudents(data.online_students || []);
-
-        // System Metrics
+        // Server Hardware metrics
         const sys = data.system_metrics || {};
         document.getElementById('sysRpm').textContent = sys.requests_per_minute || 0;
         document.getElementById('sysCpu').textContent = (sys.cpu_percent || 0) + '%';
         document.getElementById('barCpu').style.width = (sys.cpu_percent || 0) + '%';
-        if (sys.cpu_percent > 80) document.getElementById('barCpu').style.background = '#ef4444';
-        
+        if (sys.cpu_percent > 80) document.getElementById('barCpu').style.background = 'var(--admin-rose)';
+
         document.getElementById('sysMem').textContent = (sys.memory_percent || 0) + '%';
         document.getElementById('barMem').style.width = (sys.memory_percent || 0) + '%';
-        if (sys.memory_percent > 85) document.getElementById('barMem').style.background = '#ef4444';
-        
+        if (sys.memory_percent > 85) document.getElementById('barMem').style.background = 'var(--admin-rose)';
+
         document.getElementById('sysDisk').textContent = (sys.disk_percent || 0) + '%';
         document.getElementById('barDisk').style.width = (sys.disk_percent || 0) + '%';
-
-        // Model Quotas Table
-        renderModelQuotas(data.model_quotas || []);
-
-        // Student Roster
-        allStudents = data.students_roster || [];
-        renderRosterTable();
 
         // Toughest Problems
         const toughContainer = document.getElementById('toughestProblemsList');
         toughContainer.innerHTML = '';
         (data.toughest_problems || []).forEach(p => {
-            let passRate = p.attempts > 0 ? Math.round((p.correct / p.attempts) * 100) : 0;
+            const passRate = p.attempts > 0 ? Math.round((p.correct / p.attempts) * 100) : 0;
             const html = `
-                <div class="bar-item">
-                    <div class="bar-label">
-                        <span>${escapeHtml(p.title)}</span>
-                        <span>${p.attempts} attempts (${passRate}% pass)</span>
+                <div style="margin-bottom: 0.85rem;">
+                    <div style="display: flex; justify-content: space-between; font-size: 0.82rem; margin-bottom: 0.25rem;">
+                        <span style="font-weight: 600; color: #fff;">${escapeHtml(p.title)}</span>
+                        <span style="color: var(--admin-text-muted);">${p.attempts} attempts (${passRate}% pass)</span>
                     </div>
-                    <div class="bar-bg">
-                        <div class="bar-fill" style="width: ${passRate}%; background: ${passRate < 50 ? '#ef4444' : '#f59e0b'};"></div>
+                    <div class="bar-bg" style="height: 6px;">
+                        <div class="bar-fill" style="width: ${passRate}%; background: ${passRate < 50 ? 'var(--admin-rose)' : 'var(--admin-amber)'};"></div>
                     </div>
                 </div>
             `;
@@ -273,272 +281,1072 @@ document.addEventListener('DOMContentLoaded', () => {
         // Guidance Usage
         const guideContainer = document.getElementById('guidanceUsageList');
         guideContainer.innerHTML = '';
-        let totalSessions = (data.guidance_usage || []).reduce((sum, g) => sum + g.c, 0);
-        const levelNames = {1: "Level 1 (Hints)", 2: "Level 2 (Logic)", 3: "Level 3 (Code)"};
-        
+        const totalSessions = (data.guidance_usage || []).reduce((sum, g) => sum + g.c, 0);
+        const levelNames = { 1: "Level 1 (Socratic Hints)", 2: "Level 2 (Logic Breakdown)", 3: "Level 3 (Targeted Syntax)" };
+
         (data.guidance_usage || []).forEach(g => {
-            let p = totalSessions > 0 ? Math.round((g.c / totalSessions) * 100) : 0;
-            let name = levelNames[g.help_level] || `Level ${g.help_level}`;
+            const pct = totalSessions > 0 ? Math.round((g.c / totalSessions) * 100) : 0;
+            const name = levelNames[g.help_level] || `Level ${g.help_level}`;
             const html = `
-                <div class="bar-item">
-                    <div class="bar-label">
-                        <span>${name}</span>
-                        <span>${p}% (${g.c})</span>
+                <div style="margin-bottom: 0.85rem;">
+                    <div style="display: flex; justify-content: space-between; font-size: 0.82rem; margin-bottom: 0.25rem;">
+                        <span style="font-weight: 600; color: #fff;">${name}</span>
+                        <span style="color: var(--admin-text-muted);">${pct}% (${g.c})</span>
                     </div>
-                    <div class="bar-bg">
-                        <div class="bar-fill" style="width: ${p}%; background: ${g.help_level === 3 ? '#ef4444' : '#3b82f6'};"></div>
+                    <div class="bar-bg" style="height: 6px;">
+                        <div class="bar-fill" style="width: ${pct}%; background: ${g.help_level === 3 ? 'var(--admin-rose)' : 'var(--admin-cyan)'};"></div>
                     </div>
                 </div>
             `;
             guideContainer.insertAdjacentHTML('beforeend', html);
         });
 
-        // Live Feed
-        const feedContainer = document.getElementById('liveFeed');
-        feedContainer.innerHTML = '';
+        // Live Feed Ticker
+        const liveFeedBody = document.getElementById('liveFeedBody');
+        liveFeedBody.innerHTML = '';
         (data.recent_activity || []).forEach(a => {
             const time = formatLocalTime(a.created_at);
-            const badgeClass = a.is_correct ? 'badge-success' : 'badge-fail';
-            const badgeText = a.is_correct ? 'PASSED' : 'FAILED';
-            const levelText = a.help_level > 1 ? ` (Help L${a.help_level})` : '';
-            const modelText = a.model_used ? ` [${escapeHtml(a.model_used)}]` : '';
-            
-            const html = `
-                <div class="feed-item">
-                    <div class="feed-main">
-                        <span class="feed-name">${escapeHtml(a.name)} <span style="color:#64748b; font-weight:normal;">submitted</span> ${escapeHtml(a.title)}</span>
-                        <span class="feed-meta">${time}${levelText}${modelText}</span>
-                    </div>
-                    <span class="feed-badge ${badgeClass}">${badgeText}</span>
-                </div>
-            `;
-            feedContainer.insertAdjacentHTML('beforeend', html);
-        });
-    }
-
-    function renderModelQuotas(quotas) {
-        const tbody = document.getElementById('quotasTableBody');
-        tbody.innerHTML = '';
-
-        if (!quotas || quotas.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: #64748b;">No quota data available</td></tr>`;
-            return;
-        }
-
-        quotas.forEach(q => {
-            let pillClass = 'pill-ready';
-            if (q.status.includes('Cooling')) pillClass = 'pill-cooling';
-            else if (q.status.includes('Blocked') || q.status.includes('Exhausted')) pillClass = 'pill-blocked';
-
-            const pct = q.day_limit > 0 ? Math.min(100, Math.round((q.day_used / q.day_limit) * 100)) : 0;
+            const verdictBadge = a.is_correct
+                ? `<span class="pill pill-solved">SOLVED</span>`
+                : `<span class="pill pill-progress">ATTEMPT</span>`;
 
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td style="font-weight: 600; font-family: 'Fira Code', monospace; color: #f1f5f9;">${escapeHtml(q.model)}</td>
-                <td><span class="pill pill-tier">${escapeHtml(q.tier)}</span></td>
-                <td>
-                    <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 0.3rem;">
-                        <span>${q.day_used} / ${q.day_limit} reqs</span>
-                        <span style="color: #94a3b8;">${pct}%</span>
-                    </div>
-                    <div class="bar-bg" style="height: 6px;">
-                        <div class="bar-fill" style="width: ${pct}%; background: ${pct > 85 ? '#ef4444' : '#38bdf8'};"></div>
-                    </div>
+                <td style="font-weight: 600; color: #fff;">${escapeHtml(a.name)}</td>
+                <td>${escapeHtml(a.title)}</td>
+                <td>${verdictBadge}</td>
+                <td><span class="pill">Level ${a.help_level || 1}</span></td>
+                <td class="code-font" style="color: var(--admin-violet);">${escapeHtml(a.model_used || '-')}</td>
+                <td style="color: var(--admin-text-muted); font-size: 0.8rem;">${time}</td>
+            `;
+            liveFeedBody.appendChild(tr);
+        });
+    }
+
+    // ──────────────────────────────────────────────
+    // VIEW 2: PROBLEM STUDIO CONTROLLER
+    // ──────────────────────────────────────────────
+    // VIEW 2: PROBLEM STUDIO CONTROLLER
+    // ──────────────────────────────────────────────
+    async function loadProblemsView() {
+        const tbody = document.getElementById('problemsTableBody');
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--admin-text-muted); padding: 2rem;">Loading problem studio catalog...</td></tr>`;
+
+        try {
+            const res = await fetch('/api/admin/problems', {
+                headers: { 'X-Admin-Secret': state.secret }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                state.problemsList = data.problems || [];
+                populateTopicFilter(state.problemsList);
+                renderProblemsTable();
+            } else {
+                tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--admin-rose); padding: 2rem;">Failed to load problems (${res.status}).</td></tr>`;
+            }
+        } catch (err) {
+            tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--admin-rose); padding: 2rem;">Error loading problems catalog.</td></tr>`;
+        }
+    }
+
+    function populateTopicFilter(problems) {
+        const select = document.getElementById('problemTopicFilter');
+        const currentVal = select.value;
+        const topics = [...new Set(problems.map(p => p.topic))].sort();
+
+        select.innerHTML = `<option value="">All Topics</option>`;
+        topics.forEach(t => {
+            const opt = document.createElement('option');
+            opt.value = t;
+            opt.textContent = t;
+            if (t === currentVal) opt.selected = true;
+            select.appendChild(opt);
+        });
+    }
+
+    function renderProblemsTable() {
+        const tbody = document.getElementById('problemsTableBody');
+        const query = (document.getElementById('problemSearchInput').value || '').trim().toLowerCase();
+        const selectedTopic = document.getElementById('problemTopicFilter').value;
+        const selectedDiff = document.getElementById('problemDifficultyFilter').value;
+
+        const filtered = (state.problemsList || []).filter(p => {
+            const matchQuery = !query || p.title.toLowerCase().includes(query) || (p.topic && p.topic.toLowerCase().includes(query));
+            const matchTopic = !selectedTopic || p.topic === selectedTopic;
+            const matchDiff = !selectedDiff || p.difficulty.toLowerCase() === selectedDiff.toLowerCase();
+            return matchQuery && matchTopic && matchDiff;
+        });
+
+        document.getElementById('problemCountBadge').textContent = `${filtered.length} Problems`;
+        tbody.innerHTML = '';
+
+        if (filtered.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--admin-text-muted); padding: 2rem;">No problems match current filters.</td></tr>`;
+            return;
+        }
+
+        filtered.forEach(p => {
+            const diffClass = `pill-${(p.difficulty || 'Easy').toLowerCase()}`;
+            const hasDirective = p.teacher_instructions && p.teacher_instructions.trim().length > 0;
+            const directiveBadge = hasDirective
+                ? `<span class="pill pill-active" title="${escapeHtml(p.teacher_instructions)}">Directive Active</span>`
+                : `<span style="color: var(--admin-text-faint); font-size: 0.8rem;">None</span>`;
+
+            const statusBadge = p.is_active
+                ? `<span class="pill pill-active">Active</span>`
+                : `<span class="pill" style="background: rgba(244,63,94,0.15); color: var(--admin-rose); border: 1px solid rgba(244,63,94,0.3);">Inactive</span>`;
+
+            const actionBtn = p.is_active
+                ? `<button class="btn btn-danger btn-xs" onclick="window.deactivateProblem(${p.id})" style="margin-left: 4px;">Deactivate</button>`
+                : `<button class="btn btn-success btn-xs" onclick="window.activateProblem(${p.id})" style="margin-left: 4px; background: rgba(16,185,129,0.2); color: var(--admin-emerald); border: 1px solid rgba(16,185,129,0.3);">Activate</button>`;
+
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td style="font-weight: 700; color: var(--admin-text-muted);">${p.id}</td>
+                <td style="font-weight: 600; color: #fff;">${escapeHtml(p.title)}</td>
+                <td><span class="pill pill-inactive">${escapeHtml(p.topic)}</span></td>
+                <td><span class="pill ${diffClass}">${escapeHtml(p.difficulty)}</span></td>
+                <td>${directiveBadge}</td>
+                <td>${statusBadge}</td>
+                <td style="text-align: right; white-space: nowrap;">
+                    <button class="btn btn-secondary btn-xs" onclick="window.editProblemInStudio(${p.id})">Edit</button>
+                    ${actionBtn}
                 </td>
-                <td style="font-family: 'Fira Code', monospace;">${q.rpm_active} / ${q.rpm_limit}</td>
-                <td><span class="pill ${pillClass}">${escapeHtml(q.status)}</span></td>
             `;
             tbody.appendChild(tr);
         });
     }
 
-    function renderOnlineStudents(list) {
-        const tbody = document.getElementById('onlineStudentsBody');
-        const badgeCount = document.getElementById('onlineBadgeCount');
-        if (!tbody) return;
+    // Problem Drawer Tabs
+    const drawerTabBtns = document.querySelectorAll('#problemDrawer .tab-btn');
+    const drawerTabPanels = document.querySelectorAll('#problemDrawer .tab-content-panel');
+    drawerTabBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const targetId = btn.getAttribute('data-tab');
+            drawerTabBtns.forEach(b => b.classList.remove('active'));
+            drawerTabPanels.forEach(p => p.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById(targetId).classList.add('active');
+        });
+    });
 
-        if (badgeCount) {
-            badgeCount.textContent = `${list.length} Online Now`;
-            badgeCount.className = list.length > 0 ? 'pill pill-ready' : 'pill';
+    document.getElementById('btnCreateProblem').addEventListener('click', () => {
+        document.getElementById('editProblemId').value = '';
+        document.getElementById('drawerProblemTitle').textContent = 'Create New Practice Problem';
+        document.getElementById('studioTitle').value = '';
+        document.getElementById('studioTopic').value = '';
+        document.getElementById('studioDifficulty').value = 'Easy';
+        document.getElementById('studioConcepts').value = '';
+        document.getElementById('studioDescription').value = '';
+        document.getElementById('studioStarterCode').value = '';
+        document.getElementById('studioSampleInput').value = '';
+        document.getElementById('studioSampleOutput').value = '';
+        document.getElementById('studioRubric').value = '';
+        document.getElementById('studioReferenceSolution').value = '';
+        document.getElementById('studioTeacherInstructions').value = '';
+
+        // Reset to first tab
+        drawerTabBtns[0].click();
+        problemDrawer.classList.remove('hidden');
+    });
+
+    window.editProblemInStudio = async function(problemId) {
+        try {
+            const res = await fetch(`/api/admin/problems/${problemId}/full`, {
+                headers: { 'X-Admin-Secret': state.secret }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                document.getElementById('editProblemId').value = data.id;
+                document.getElementById('drawerProblemTitle').textContent = `Edit Problem #${data.id}: ${data.title}`;
+                document.getElementById('studioTitle').value = data.title || '';
+                document.getElementById('studioTopic').value = data.topic || '';
+                document.getElementById('studioDifficulty').value = data.difficulty || 'Easy';
+                document.getElementById('studioConcepts').value = (data.concepts || []).join(', ');
+                document.getElementById('studioDescription').value = data.description || '';
+                document.getElementById('studioStarterCode').value = data.starter_code || '';
+                document.getElementById('studioSampleInput').value = data.sample_input || '';
+                document.getElementById('studioSampleOutput').value = data.sample_output || '';
+                document.getElementById('studioRubric').value = data.ai_rubric || '';
+                document.getElementById('studioReferenceSolution').value = data.reference_solution || '';
+                document.getElementById('studioTeacherInstructions').value = data.teacher_instructions || '';
+
+                drawerTabBtns[0].click();
+                problemDrawer.classList.remove('hidden');
+            } else {
+                showToast("Failed to load full problem details", "error");
+            }
+        } catch (err) {
+            showToast("Network error loading problem", "error");
         }
+    };
 
-        tbody.innerHTML = '';
-        if (!list || list.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: #64748b; padding: 2rem;">No students are currently in active practice sessions.</td></tr>`;
+    document.getElementById('closeProblemDrawerBtn').addEventListener('click', () => {
+        problemDrawer.classList.add('hidden');
+    });
+    document.getElementById('cancelDrawerBtn').addEventListener('click', () => {
+        problemDrawer.classList.add('hidden');
+    });
+
+    document.getElementById('saveProblemBtn').addEventListener('click', async () => {
+        const id = document.getElementById('editProblemId').value;
+        const title = document.getElementById('studioTitle').value.trim();
+        const topic = document.getElementById('studioTopic').value.trim();
+        const difficulty = document.getElementById('studioDifficulty').value;
+        const concepts = document.getElementById('studioConcepts').value.split(',').map(c => c.trim()).filter(Boolean);
+        const description = document.getElementById('studioDescription').value.trim();
+        const starter_code = document.getElementById('studioStarterCode').value;
+        const sample_input = document.getElementById('studioSampleInput').value;
+        const sample_output = document.getElementById('studioSampleOutput').value.trim();
+        const ai_rubric = document.getElementById('studioRubric').value.trim();
+        const reference_solution = document.getElementById('studioReferenceSolution').value.trim();
+        const teacher_instructions = document.getElementById('studioTeacherInstructions').value.trim();
+
+        if (!title || !topic || !description || !sample_output || !ai_rubric) {
+            showToast("Please fill in all required problem fields", "error");
             return;
         }
 
-        list.forEach(s => {
-            const secAgo = s.seconds_ago !== undefined && s.seconds_ago !== null ? s.seconds_ago : 0;
-            const seenText = secAgo <= 15 ? 'Active just now' : `${secAgo}s ago`;
-            const duration = formatDuration(s.time_spent_seconds || 0);
+        const payload = {
+            title, topic, difficulty, concepts, description,
+            starter_code, sample_input, sample_output, ai_rubric,
+            reference_solution, teacher_instructions
+        };
+
+        try {
+            const url = id ? `/api/admin/problems/${id}` : '/api/admin/problems';
+            const method = id ? 'PUT' : 'POST';
+
+            const res = await fetch(url, {
+                method,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Admin-Secret': state.secret
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (res.ok) {
+                showToast(id ? "Problem updated successfully!" : "New problem created!");
+                problemDrawer.classList.add('hidden');
+                loadProblemsView();
+            } else {
+                const err = await res.json();
+                showToast(err.detail || "Error saving problem", "error");
+            }
+        } catch (err) {
+            showToast("Network error saving problem", "error");
+        }
+    });
+
+    window.deactivateProblem = async function(problemId) {
+        if (!confirm(`Are you sure you want to deactivate problem #${problemId}?`)) return;
+
+        try {
+            const res = await fetch(`/api/admin/problems/${problemId}?hard=false`, {
+                method: 'DELETE',
+                headers: { 'X-Admin-Secret': state.secret }
+            });
+            if (res.ok) {
+                showToast(`Problem #${problemId} deactivated.`);
+                loadProblemsView();
+            } else {
+                const err = await res.json();
+                showToast(err.detail || "Error deactivating problem", "error");
+            }
+        } catch (err) {
+            showToast("Network error deactivating problem", "error");
+        }
+    };
+
+    window.activateProblem = async function(problemId) {
+        try {
+            const res = await fetch(`/api/admin/problems/${problemId}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Admin-Secret': state.secret
+                },
+                body: JSON.stringify({ is_active: true })
+            });
+            if (res.ok) {
+                showToast(`Problem #${problemId} restored to active status.`);
+                loadProblemsView();
+            } else {
+                const err = await res.json();
+                showToast(err.detail || "Error restoring problem", "error");
+            }
+        } catch (err) {
+            showToast("Network error restoring problem", "error");
+        }
+    };
+
+    // ──────────────────────────────────────────────
+    // VIEW 3: TOPICS CONTROLLER
+    // ──────────────────────────────────────────────
+    async function loadTopicsView() {
+        const tbody = document.getElementById('topicsTableBody');
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--admin-text-muted); padding: 2rem;">Loading curriculum modules...</td></tr>`;
+
+        try {
+            const res = await fetch('/api/admin/topics', {
+                headers: { 'X-Admin-Secret': state.secret }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                state.topicsList = data.topics || [];
+                renderTopicsTable();
+            }
+        } catch (err) {
+            tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--admin-rose); padding: 2rem;">Error loading topics.</td></tr>`;
+        }
+    }
+
+    function renderTopicsTable() {
+        const tbody = document.getElementById('topicsTableBody');
+        tbody.innerHTML = '';
+
+        if (!state.topicsList || state.topicsList.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--admin-text-muted); padding: 2rem;">No curriculum topics defined.</td></tr>`;
+            return;
+        }
+
+        state.topicsList.forEach(t => {
+            const rate = t.total_sessions > 0 ? Math.round((t.solved_sessions / t.total_sessions) * 100) : 0;
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td style="font-weight: 700; color: #fff;">${escapeHtml(t.topic_name)}</td>
+                <td style="font-weight: 600;">${t.total_problems}</td>
+                <td style="color: var(--admin-cyan); font-weight: 600;">${t.active_problems}</td>
+                <td>${t.total_sessions}</td>
+                <td style="color: var(--admin-emerald); font-weight: 700;">${t.solved_sessions}</td>
+                <td>
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <span style="font-size: 0.8rem; font-weight: 600; width: 35px;">${rate}%</span>
+                        <div class="bar-bg" style="width: 80px; height: 5px;">
+                            <div class="bar-fill" style="width: ${rate}%;"></div>
+                        </div>
+                    </div>
+                </td>
+                <td style="text-align: right;">
+                    <button class="btn btn-secondary btn-xs" onclick="window.openRenameTopicModal('${escapeHtml(t.topic_name)}')">Rename</button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    document.getElementById('btnAddTopicBtn').addEventListener('click', () => {
+        document.getElementById('topicModalTitle').textContent = 'Add New Curriculum Topic';
+        document.getElementById('topicModalMode').value = 'create';
+        document.getElementById('topicModalNameInput').value = '';
+        document.getElementById('topicModalDescInput').value = '';
+        topicModal.classList.remove('hidden');
+    });
+
+    window.openRenameTopicModal = function(oldName) {
+        document.getElementById('topicModalTitle').textContent = `Rename Topic: ${oldName}`;
+        document.getElementById('topicModalMode').value = 'rename';
+        document.getElementById('topicModalOldName').value = oldName;
+        document.getElementById('topicModalNameInput').value = oldName;
+        document.getElementById('topicModalDescInput').value = '';
+        topicModal.classList.remove('hidden');
+    };
+
+    document.getElementById('closeTopicModalBtn').addEventListener('click', () => topicModal.classList.add('hidden'));
+    document.getElementById('cancelTopicModalBtn').addEventListener('click', () => topicModal.classList.add('hidden'));
+
+    document.getElementById('confirmTopicModalBtn').addEventListener('click', async () => {
+        const mode = document.getElementById('topicModalMode').value;
+        const name = document.getElementById('topicModalNameInput').value.trim();
+        const description = document.getElementById('topicModalDescInput').value.trim();
+
+        if (!name) {
+            showToast("Please enter a topic name", "error");
+            return;
+        }
+
+        try {
+            if (mode === 'create') {
+                const res = await fetch('/api/admin/topics', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': state.secret },
+                    body: JSON.stringify({ name, description })
+                });
+                if (res.ok) {
+                    showToast("Topic created successfully!");
+                    topicModal.classList.add('hidden');
+                    loadTopicsView();
+                } else {
+                    const err = await res.json();
+                    showToast(err.detail || "Error creating topic", "error");
+                }
+            } else {
+                const oldName = document.getElementById('topicModalOldName').value;
+                const res = await fetch(`/api/admin/topics/${encodeURIComponent(oldName)}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': state.secret },
+                    body: JSON.stringify({ new_name: name, description })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    showToast(`Topic renamed! Updated ${data.problems_updated} associated problem(s).`);
+                    topicModal.classList.add('hidden');
+                    loadTopicsView();
+                } else {
+                    const err = await res.json();
+                    showToast(err.detail || "Error renaming topic", "error");
+                }
+            }
+        } catch (err) {
+            showToast("Network error updating topic", "error");
+        }
+    });
+
+    // ──────────────────────────────────────────────
+    // VIEW 4: STUDENT ACCOUNTS CONTROLLER
+    // ──────────────────────────────────────────────
+    async function loadStudentsView() {
+        const tbody = document.getElementById('studentsTableBody');
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--admin-text-muted); padding: 2rem;">Loading student accounts roster...</td></tr>`;
+
+        const query = state.studentsSearch ? `&search=${encodeURIComponent(state.studentsSearch)}` : '';
+        const section = state.studentsSection ? `&section=${encodeURIComponent(state.studentsSection)}` : '';
+
+        try {
+            const res = await fetch(`/api/admin/students?page=${state.studentsPage}&page_size=25${section}${query}`, {
+                headers: { 'X-Admin-Secret': state.secret }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                state.studentsTotalPages = data.total_pages || 1;
+                document.getElementById('studentCountBadge').textContent = `${data.total} Students`;
+                document.getElementById('paginationInfo').textContent = `Showing page ${data.page} of ${data.total_pages}`;
+                document.getElementById('prevPageBtn').disabled = data.page <= 1;
+                document.getElementById('nextPageBtn').disabled = data.page >= data.total_pages;
+
+                renderStudentsTable(data.students || []);
+            }
+        } catch (err) {
+            tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--admin-rose); padding: 2rem;">Error loading student roster.</td></tr>`;
+        }
+    }
+
+    function renderStudentsTable(students) {
+        const tbody = document.getElementById('studentsTableBody');
+        tbody.innerHTML = '';
+
+        if (!students || students.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--admin-text-muted); padding: 2rem;">No students found matching your criteria.</td></tr>`;
+            return;
+        }
+
+        students.forEach(s => {
+            const lastActive = s.last_active_at ? formatLocalDateTime(s.last_active_at) : 'Never';
+            const statusBadge = s.is_active
+                ? `<span class="pill pill-active">Active</span>`
+                : `<span class="pill pill-inactive">Inactive</span>`;
 
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td style="font-weight: 600; color: #f1f5f9;">
+                <td class="code-font" style="font-weight: 700; color: #fff;">${escapeHtml(s.roll_no)}</td>
+                <td style="font-weight: 600;">${escapeHtml(s.name)}</td>
+                <td><span class="pill" style="background: rgba(148, 163, 184, 0.15);">Sec ${escapeHtml(s.section)}</span></td>
+                <td style="color: var(--admin-emerald); font-weight: 700;">${s.problems_solved || 0}</td>
+                <td class="code-font" style="color: var(--admin-cyan);">${formatDuration(s.total_time_seconds || 0)}</td>
+                <td>${statusBadge}</td>
+                <td style="color: var(--admin-text-muted); font-size: 0.8rem;">${lastActive}</td>
+                <td style="text-align: right; white-space: nowrap;">
+                    <button class="btn btn-secondary btn-xs" onclick="window.inspectStudent(${s.id})">Telemetry</button>
+                    <button class="btn btn-secondary btn-xs" onclick="window.openStudentRateLimitModal(${s.id}, '${escapeHtml(s.name)}', '${escapeHtml(s.roll_no)}')" style="margin-left: 4px;" title="Individual Guidance Rate Limits">Limits</button>
+                    <button class="btn btn-secondary btn-xs" onclick="window.openResetPasswordModal(${s.id}, '${escapeHtml(s.name)}', '${escapeHtml(s.roll_no)}', '${escapeHtml(s.section)}')" style="margin-left: 4px;">Reset Pw</button>
+                    <button class="btn btn-danger btn-xs" onclick="window.deleteStudent(${s.id}, '${escapeHtml(s.roll_no)}')" style="margin-left: 4px;">Deactivate</button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    document.getElementById('prevPageBtn').addEventListener('click', () => {
+        if (state.studentsPage > 1) {
+            state.studentsPage--;
+            loadStudentsView();
+        }
+    });
+
+    document.getElementById('nextPageBtn').addEventListener('click', () => {
+        if (state.studentsPage < state.studentsTotalPages) {
+            state.studentsPage++;
+            loadStudentsView();
+        }
+    });
+
+    document.getElementById('studentSearchInput').addEventListener('input', (e) => {
+        state.studentsSearch = e.target.value.trim();
+        state.studentsPage = 1;
+        loadStudentsView();
+    });
+
+    document.getElementById('studentSectionFilter').addEventListener('change', (e) => {
+        state.studentsSection = e.target.value;
+        state.studentsPage = 1;
+        loadStudentsView();
+    });
+
+    // Student Single Password Reset Modal
+    window.openResetPasswordModal = function(id, name, roll, section) {
+        document.getElementById('resetPwStudentId').value = id;
+        document.getElementById('resetPwStudentInfo').textContent = `Student: ${name} (Section ${section}, Roll No: ${roll})`;
+        document.getElementById('resetPwInput').value = '123';
+        document.getElementById('resetPwRequireChange').checked = true;
+        resetPwModal.classList.remove('hidden');
+    };
+
+    document.getElementById('closeResetPwModalBtn').addEventListener('click', () => resetPwModal.classList.add('hidden'));
+    document.getElementById('cancelResetPwBtn').addEventListener('click', () => resetPwModal.classList.add('hidden'));
+
+    document.getElementById('confirmResetPwBtn').addEventListener('click', async () => {
+        const id = document.getElementById('resetPwStudentId').value;
+        const new_password = document.getElementById('resetPwInput').value.trim();
+        const require_change = document.getElementById('resetPwRequireChange').checked;
+
+        try {
+            const res = await fetch(`/api/admin/students/${id}/reset-password`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': state.secret },
+                body: JSON.stringify({ new_password, require_change })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                showToast(`Password for Roll ${data.roll_no} reset to '${new_password}'.`);
+                resetPwModal.classList.add('hidden');
+            } else {
+                showToast("Failed to reset student password", "error");
+            }
+        } catch (err) {
+            showToast("Network error resetting password", "error");
+        }
+    });
+
+    // Bulk Section Reset Modal
+    document.getElementById('btnBulkResetModal').addEventListener('click', () => {
+        bulkResetModal.classList.remove('hidden');
+    });
+    document.getElementById('closeBulkResetModalBtn').addEventListener('click', () => bulkResetModal.classList.add('hidden'));
+    document.getElementById('cancelBulkResetBtn').addEventListener('click', () => bulkResetModal.classList.add('hidden'));
+
+    document.getElementById('confirmBulkResetBtn').addEventListener('click', async () => {
+        const section = document.getElementById('bulkResetSectionSelect').value;
+        const default_password = document.getElementById('bulkResetDefaultPwInput').value.trim();
+
+        if (!confirm(`Confirm bulk password reset for ${section ? 'Section ' + section : 'ALL SECTIONS'}? This will invalidate all active sessions.`)) return;
+
+        try {
+            const res = await fetch('/api/admin/students/bulk-reset-passwords', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': state.secret },
+                body: JSON.stringify({ section: section || null, default_password })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                showToast(data.message || `Reset ${data.students_affected} student passwords!`);
+                bulkResetModal.classList.add('hidden');
+                loadStudentsView();
+            } else {
+                showToast("Bulk reset failed", "error");
+            }
+        } catch (err) {
+            showToast("Network error performing bulk reset", "error");
+        }
+    });
+
+    // Add Student Account Modal
+    document.getElementById('btnAddStudentModal').addEventListener('click', () => {
+        document.getElementById('newStudentName').value = '';
+        document.getElementById('newStudentRoll').value = '';
+        document.getElementById('newStudentSection').value = '';
+        document.getElementById('newStudentPassword').value = '123';
+        addStudentModal.classList.remove('hidden');
+    });
+    document.getElementById('closeAddStudentModalBtn').addEventListener('click', () => addStudentModal.classList.add('hidden'));
+    document.getElementById('cancelAddStudentBtn').addEventListener('click', () => addStudentModal.classList.add('hidden'));
+
+    document.getElementById('confirmAddStudentBtn').addEventListener('click', async () => {
+        const name = document.getElementById('newStudentName').value.trim();
+        const roll_no = document.getElementById('newStudentRoll').value.trim();
+        const section = document.getElementById('newStudentSection').value.trim().toUpperCase();
+        const password = document.getElementById('newStudentPassword').value.trim();
+
+        if (!name || !roll_no || !section) {
+            showToast("Please provide Student Name, Roll No, and Section", "error");
+            return;
+        }
+
+        try {
+            const res = await fetch('/api/admin/students', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': state.secret },
+                body: JSON.stringify({ name, roll_no, section, password, needs_password_change: true })
+            });
+            if (res.ok) {
+                showToast(`Student ${name} (${roll_no}) created successfully!`);
+                addStudentModal.classList.add('hidden');
+                loadStudentsView();
+            } else {
+                const err = await res.json();
+                showToast(err.detail || "Error creating student", "error");
+            }
+        } catch (err) {
+            showToast("Network error creating student", "error");
+        }
+    });
+
+    window.deleteStudent = async function(id, roll) {
+        if (!confirm(`Are you sure you want to deactivate student ${roll}?`)) return;
+
+        try {
+            const res = await fetch(`/api/admin/students/${id}?hard=false`, {
+                method: 'DELETE',
+                headers: { 'X-Admin-Secret': state.secret }
+            });
+            if (res.ok) {
+                showToast(`Student ${roll} deactivated.`);
+                loadStudentsView();
+            } else {
+                showToast("Failed to deactivate student", "error");
+            }
+        } catch (err) {
+            showToast("Network error deactivating student", "error");
+        }
+    };
+
+    // ──────────────────────────────────────────────
+    // VIEW 5: LIVE LAB COMMAND CENTER CONTROLLER
+    // ──────────────────────────────────────────────
+    function renderLiveLab(onlineList) {
+        const tbody = document.getElementById('liveLabTableBody');
+        const badge = document.getElementById('liveLabCountBadge');
+        if (!tbody) return;
+
+        badge.textContent = `${onlineList.length} Online Now`;
+        tbody.innerHTML = '';
+
+        if (!onlineList || onlineList.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--admin-text-muted); padding: 3rem;">No active student connections detected in the last 120 seconds.</td></tr>`;
+            return;
+        }
+
+        onlineList.forEach(s => {
+            const secAgo = s.seconds_ago !== undefined && s.seconds_ago !== null ? s.seconds_ago : 0;
+            const seenText = secAgo <= 15 ? 'Active just now' : `${secAgo}s ago`;
+
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td style="font-weight: 700; color: #fff;">
                     <div style="display: flex; align-items: center; gap: 0.5rem;">
                         <span class="pulse-dot"></span>
                         <span>${escapeHtml(s.student_name)}</span>
                     </div>
                 </td>
-                <td><span class="pill" style="background: rgba(148, 163, 184, 0.15); color: #cbd5e1;">Sec ${escapeHtml(s.section)}</span></td>
-                <td style="font-family: 'Fira Code', monospace;">${escapeHtml(s.roll_no)}</td>
+                <td><span class="pill" style="background: rgba(148, 163, 184, 0.15);">Sec ${escapeHtml(s.section)}</span></td>
+                <td class="code-font">${escapeHtml(s.roll_no)}</td>
                 <td>
-                    <span class="pill" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-weight: 600;">
-                        ${escapeHtml(s.problem_title)}
-                    </span>
-                    <span style="font-size: 0.78rem; color: #94a3b8; margin-left: 0.4rem;">(${escapeHtml(s.problem_topic)})</span>
+                    <span class="pill pill-active">${escapeHtml(s.problem_title)}</span>
+                    <span style="color: var(--admin-text-faint); font-size: 0.78rem; margin-left: 4px;">(${escapeHtml(s.problem_topic)})</span>
                 </td>
-                <td style="color: #38bdf8; font-family: 'Fira Code', monospace; font-weight: 600;">⏱ ${duration}</td>
-                <td style="color: #38bdf8; font-weight: 700;">${s.run_count || 0}</td>
-                <td style="font-size: 0.8rem; color: #10b981; font-weight: 600;">${seenText}</td>
-                <td>
-                    <button class="btn-action btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.78rem;" onclick="window.inspectStudent(${s.student_id})">
-                        Inspect
-                    </button>
+                <td class="code-font" style="color: var(--admin-cyan);">⏱ ${formatDuration(s.time_spent_seconds || 0)}</td>
+                <td style="font-weight: 700; color: var(--admin-cyan);">${s.run_count || 0}</td>
+                <td style="color: var(--admin-emerald); font-size: 0.8rem; font-weight: 600;">${seenText}</td>
+                <td style="text-align: right; white-space: nowrap;">
+                    <button class="btn btn-emerald btn-xs" onclick="window.overridePassSession(${s.session_id})" title="Manually mark problem as solved">Pass</button>
+                    <button class="btn btn-danger btn-xs" onclick="window.resetProblemSession(${s.session_id})" style="margin-left: 4px;" title="Clear student draft to restart problem fresh">Reset</button>
+                    <button class="btn btn-secondary btn-xs" onclick="window.inspectStudent(${s.student_id})" style="margin-left: 4px;">Inspect</button>
                 </td>
             `;
             tbody.appendChild(tr);
         });
     }
 
-    function renderRosterTable() {
-        const query = rosterSearch.value.trim().toLowerCase();
-        const section = rosterSectionFilter.value;
-
-        const filtered = allStudents.filter(s => {
-            const matchesQuery = !query || s.name.toLowerCase().includes(query) || s.roll_no.toLowerCase().includes(query);
-            const matchesSection = !section || s.section === section;
-            return matchesQuery && matchesSection;
-        });
-
-        rosterCount.textContent = `${filtered.length} of ${allStudents.length} Students`;
-        rosterTableBody.innerHTML = '';
-
-        if (filtered.length === 0) {
-            rosterTableBody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: #64748b; padding: 2rem;">No students found matching your filters.</td></tr>`;
-            return;
-        }
-
-        filtered.forEach(s => {
-            const lastActiveTime = s.last_active ? formatLocalDateTime(s.last_active) : 'Never';
-            const statusBadge = s.is_online
-                ? `<span class="pill" style="background: rgba(16, 185, 129, 0.2); color: #10b981; font-size: 0.72rem; padding: 2px 7px; margin-left: 6px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px;"><span class="pulse-dot" style="width:6px; height:6px;"></span>Online</span>`
-                : `<span class="pill" style="background: rgba(148, 163, 184, 0.08); color: #64748b; font-size: 0.72rem; padding: 2px 7px; margin-left: 6px;">Offline</span>`;
-            
-            const currentProblemHtml = s.is_online && s.current_problem
-                ? `<div style="font-size: 0.75rem; color: #38bdf8; margin-top: 3px; font-weight: 500;">Solving: ${escapeHtml(s.current_problem)}</div>`
-                : '';
-
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td style="font-weight: 600; color: #f1f5f9;">
-                    <div style="display: flex; align-items: center;">
-                        <span>${escapeHtml(s.name)}</span>
-                        ${statusBadge}
-                    </div>
-                    ${currentProblemHtml}
-                </td>
-                <td><span class="pill" style="background: rgba(148, 163, 184, 0.15); color: #cbd5e1;">Sec ${escapeHtml(s.section)}</span></td>
-                <td style="font-family: 'Fira Code', monospace;">${escapeHtml(s.roll_no)}</td>
-                <td style="font-weight: 600;">${s.problems_attempted}</td>
-                <td style="color: #10b981; font-weight: 700;">${s.problems_solved}</td>
-                <td style="color: #38bdf8; font-weight: 600;">${s.total_runs || 0}</td>
-                <td style="color: #a78bfa; font-weight: 600;">${s.total_submissions || 0}</td>
-                <td style="color: #38bdf8; font-family: 'Fira Code', monospace; font-size: 0.85rem; font-weight: 600;">${formatDuration(s.total_time_spent || 0)}</td>
-                <td style="font-size: 0.8rem; color: #94a3b8;">${lastActiveTime}</td>
-                <td>
-                    <button class="btn-action btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.78rem;" onclick="window.inspectStudent(${s.id})">
-                        Inspect Telemetry
-                    </button>
-                </td>
-            `;
-            rosterTableBody.appendChild(tr);
-        });
-    }
-
-    // Expose student inspection globally for onclick
-    window.inspectStudent = async function(studentId) {
-        const secret = localStorage.getItem('pymentor_admin_secret');
-        if (!secret) return;
-
-        modalStudentName.textContent = "Loading student telemetry...";
-        modalStudentMeta.textContent = "";
-        modalProblemsBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: #64748b; padding: 1.5rem;">Fetching telemetry data...</td></tr>`;
-        modalEventsBody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #64748b; padding: 1.5rem;">Fetching event stream...</td></tr>`;
-        studentModal.classList.remove('hidden');
+    window.overridePassSession = async function(sessionId) {
+        if (!confirm("Manually override and mark this problem as SOLVED for the student?")) return;
 
         try {
-            const res = await fetch(`/api/admin/student/${studentId}`, {
-                headers: { 'X-Admin-Secret': secret }
+            const res = await fetch(`/api/admin/sessions/${sessionId}/override-pass`, {
+                method: 'POST',
+                headers: { 'X-Admin-Secret': state.secret }
             });
             if (res.ok) {
                 const data = await res.json();
-                renderStudentModal(data);
+                showToast(data.message || "Problem manually marked as Solved!");
+                fetchOverviewData();
             } else {
-                modalStudentName.textContent = "Error loading student telemetry";
+                showToast("Failed to override pass session", "error");
             }
         } catch (err) {
-            console.error("Error inspecting student:", err);
-            modalStudentName.textContent = "Network error loading student details";
+            showToast("Network error overriding pass", "error");
         }
     };
 
-    function renderStudentModal(data) {
-        const st = data.student;
-        modalStudentName.textContent = `${st.name}`;
-        modalStudentMeta.textContent = `Section ${st.section} | Roll No: ${st.roll_no} | Registered: ${formatLocalDateOnly(st.created_at)}`;
+    window.resetProblemSession = async function(sessionId) {
+        if (!confirm("Reset this session? This will clear the student's active draft and attempts counter.")) return;
 
-        // Problems breakdown
-        modalProblemsBody.innerHTML = '';
-        if (!data.problems || data.problems.length === 0) {
-            modalProblemsBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: #64748b; padding: 1.5rem;">No problem attempts logged yet.</td></tr>`;
-        } else {
-            data.problems.forEach(p => {
-                const isSolved = p.status === 'solved';
-                const badge = isSolved 
-                    ? `<span class="pill pill-ready">Solved</span>` 
-                    : `<span class="pill pill-cooling">In Progress</span>`;
-                const updated = p.updated_at ? formatLocalDateTime(p.updated_at) : '-';
-
-                const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td style="font-weight: 600; color: #f1f5f9;">${escapeHtml(p.title)}</td>
-                    <td style="font-size: 0.85rem; color: #94a3b8;">${escapeHtml(p.topic)}</td>
-                    <td>${badge}</td>
-                    <td style="color: #38bdf8; font-weight: 700;">${p.run_count || 0}</td>
-                    <td style="color: #a78bfa; font-weight: 700;">${p.guidance_count || 0}</td>
-                    <td style="color: #38bdf8; font-family: 'Fira Code', monospace; font-size: 0.85rem; font-weight: 600;">${formatDuration(p.time_spent_seconds || 0)}</td>
-                    <td style="font-family: 'Fira Code', monospace; font-size: 0.8rem; color: #cbd5e1;">${escapeHtml(p.last_model_used || 'None')}</td>
-                    <td style="font-size: 0.8rem; color: #94a3b8;">${updated}</td>
-                `;
-                modalProblemsBody.appendChild(tr);
+        try {
+            const res = await fetch(`/api/admin/sessions/${sessionId}/reset`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': state.secret },
+                body: JSON.stringify({ clear_history: false })
             });
+            if (res.ok) {
+                showToast("Problem session reset successfully. Student can start fresh!");
+                fetchOverviewData();
+            } else {
+                showToast("Failed to reset session", "error");
+            }
+        } catch (err) {
+            showToast("Network error resetting session", "error");
         }
+    };
 
-        // Events clickstream
-        modalEventsBody.innerHTML = '';
-        if (!data.events || data.events.length === 0) {
-            modalEventsBody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #64748b; padding: 1.5rem;">No recent clickstream events captured yet.</td></tr>`;
-        } else {
-            data.events.forEach(ev => {
-                let metaText = '-';
-                try {
-                    const parsed = JSON.parse(ev.event_data || '{}');
-                    metaText = JSON.stringify(parsed).replace(/[{}"]/g, ' ').trim();
-                } catch(e) {
-                    metaText = ev.event_data;
+    // ──────────────────────────────────────────────
+    // VIEW 6: EXPORTS & BACKUPS CONTROLLER
+    // ──────────────────────────────────────────────
+    document.getElementById('btnDownloadGradesCsv').addEventListener('click', () => {
+        const sec = document.getElementById('exportSectionSelect').value;
+        const query = sec ? `?section=${encodeURIComponent(sec)}` : '';
+        window.open(`/api/admin/export/grades.csv${query}`, '_blank');
+    });
+
+    document.getElementById('btnDownloadSubmissionsCsv').addEventListener('click', () => {
+        window.open('/api/admin/export/submissions.csv', '_blank');
+    });
+
+    document.getElementById('btnDownloadDbBackup').addEventListener('click', () => {
+        window.open('/api/admin/backup/download', '_blank');
+    });
+
+    async function loadBackupsView() {
+        const statusEl = document.getElementById('githubBackupStatusText');
+        statusEl.textContent = "Checking GitHub cloud backups...";
+
+        try {
+            const res = await fetch('/api/admin/backup/status', {
+                headers: { 'X-Admin-Secret': state.secret }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                if (data.github_configured) {
+                    statusEl.innerHTML = `<span style="color: var(--admin-emerald); font-weight: 600;">✓ Cloud Active:</span> ${data.github_repo || 'Connected'} (${data.github_backups_count || 0} backups archived)`;
+                } else {
+                    statusEl.innerHTML = `<span style="color: var(--admin-amber); font-weight: 600;">⚠️ Local Mode:</span> Cloud credentials not set in .env. Daily backups saved locally in /backups folder.`;
                 }
-
-                const evBadge = `<span class="pill" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-family: 'Fira Code', monospace;">${escapeHtml(ev.event_type)}</span>`;
-                const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td>${evBadge}</td>
-                    <td style="font-size: 0.85rem; font-family: 'Fira Code', monospace; color: #cbd5e1;">${escapeHtml(metaText)}</td>
-                    <td style="font-size: 0.8rem; color: #94a3b8;">${formatLocalTime(ev.created_at)}</td>
-                `;
-                modalEventsBody.appendChild(tr);
-            });
+            }
+        } catch (err) {
+            statusEl.textContent = "Cannot reach backup service.";
         }
+    }
+
+    document.getElementById('btnTriggerCloudBackup').addEventListener('click', async () => {
+        showToast("Triggering cloud snapshot...", "info");
+        try {
+            const res = await fetch('/api/admin/backup', {
+                method: 'POST',
+                headers: { 'X-Admin-Secret': state.secret }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                showToast(data.message || "Backup completed successfully!");
+                loadBackupsView();
+            } else {
+                showToast("Backup failed. Check server logs.", "error");
+            }
+        } catch (err) {
+            showToast("Network error triggering backup", "error");
+        }
+    });
+
+    document.getElementById('btnRestoreFromCloud').addEventListener('click', async () => {
+        if (!confirm("Pull latest database from GitHub? This will merge/sync latest student progress.")) return;
+        try {
+            const res = await fetch('/api/admin/backup/restore-github', {
+                method: 'POST',
+                headers: { 'X-Admin-Secret': state.secret }
+            });
+            if (res.ok) {
+                showToast("Database restored from cloud sync!");
+                fetchOverviewData();
+            } else {
+                showToast("Restore failed", "error");
+            }
+        } catch (err) {
+            showToast("Network error during restore", "error");
+        }
+    });
+
+    // ──────────────────────────────────────────────
+    // VIEW 7: AI & SYSTEM CONTROLLER
+    // ──────────────────────────────────────────────
+    function renderSystemQuotas(quotas) {
+        const tbody = document.getElementById('systemQuotasBody');
+        tbody.innerHTML = '';
+
+        if (!quotas || quotas.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--admin-text-muted); padding: 1.5rem;">No multi-model quota telemetry available.</td></tr>`;
+            return;
+        }
+
+        quotas.forEach(q => {
+            const pct = q.day_limit > 0 ? Math.min(100, Math.round((q.day_used / q.day_limit) * 100)) : 0;
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td class="code-font" style="font-weight: 700; color: #fff;">${escapeHtml(q.model)}</td>
+                <td><span class="pill pill-active">${escapeHtml(q.tier)}</span></td>
+                <td>
+                    <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 0.25rem;">
+                        <span>${q.day_used} / ${q.day_limit} reqs</span>
+                        <span style="color: var(--admin-text-muted);">${pct}%</span>
+                    </div>
+                    <div class="bar-bg" style="height: 5px;">
+                        <div class="bar-fill" style="width: ${pct}%; background: ${pct > 85 ? 'var(--admin-rose)' : 'var(--admin-cyan)'};"></div>
+                    </div>
+                </td>
+                <td class="code-font">${q.rpm_active} / ${q.rpm_limit}</td>
+                <td><span class="pill pill-solved">${escapeHtml(q.status)}</span></td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    // Rate Limit Config Placeholder
+    async function loadRateLimitConfig() {
+        try {
+            const res = await fetch('/api/admin/config/ratelimit', {
+                headers: { 'X-Admin-Secret': state.secret }
+            });
+            if (res.ok) {
+                const cfg = await res.json();
+                document.getElementById('toggleRateLimit').checked = Boolean(cfg.enabled);
+                document.getElementById('inputCooldownSeconds').value = cfg.cooldown_seconds !== undefined ? cfg.cooldown_seconds : 0.0;
+                document.getElementById('inputMaxGuidance').value = cfg.daily_guidance_limit !== undefined ? cfg.daily_guidance_limit : (cfg.max_guidance_per_problem || 50);
+                const overridesBadge = document.getElementById('customOverridesCountBadge');
+                if (overridesBadge) {
+                    const count = cfg.custom_overrides_count || 0;
+                    overridesBadge.textContent = `${count} Student Override${count === 1 ? '' : 's'}`;
+                }
+            }
+        } catch (err) {
+            console.warn("Could not load rate limit config:", err);
+        }
+    }
+
+    document.getElementById('btnSaveRateLimit').addEventListener('click', async () => {
+        const enabled = document.getElementById('toggleRateLimit').checked;
+        const cooldown_seconds = parseFloat(document.getElementById('inputCooldownSeconds').value) || 0.0;
+        const daily_guidance_limit = parseInt(document.getElementById('inputMaxGuidance').value, 10) || 0;
+
+        try {
+            const res = await fetch('/api/admin/config/ratelimit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': state.secret },
+                body: JSON.stringify({ enabled, cooldown_seconds, daily_guidance_limit, max_guidance_per_problem: daily_guidance_limit })
+            });
+            if (res.ok) {
+                showToast("Guidance rate limit preferences saved!");
+            } else {
+                showToast("Failed to save rate limit rules", "error");
+            }
+        } catch (err) {
+            showToast("Network error saving rate limits", "error");
+        }
+    });
+
+    // Raw SQL Console
+    document.getElementById('btnExecuteSql').addEventListener('click', async () => {
+        const query = document.getElementById('rawSqlQueryInput').value.trim();
+        const resultsArea = document.getElementById('sqlResultsArea');
+        if (!query) return;
+
+        resultsArea.innerHTML = '<span style="color: var(--admin-text-muted);">Executing query...</span>';
+
+        try {
+            const res = await fetch('/api/admin/sql', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': state.secret },
+                body: JSON.stringify({ query })
+            });
+            const data = await res.json();
+            if (res.ok) {
+                if (data.type === 'query') {
+                    if (!data.rows || data.rows.length === 0) {
+                        resultsArea.innerHTML = `<span style="color: var(--admin-emerald);">Query returned 0 rows.</span>`;
+                    } else {
+                        const cols = Object.keys(data.rows[0]);
+                        let tableHtml = `<table class="data-table"><thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead><tbody>`;
+                        data.rows.forEach(r => {
+                            tableHtml += `<tr>${cols.map(c => `<td>${escapeHtml(String(r[c]))}</td>`).join('')}</tr>`;
+                        });
+                        tableHtml += `</tbody></table>`;
+                        resultsArea.innerHTML = tableHtml;
+                    }
+                } else {
+                    resultsArea.innerHTML = `<span style="color: var(--admin-emerald);">Success: ${data.rows_affected} rows affected.</span>`;
+                }
+            } else {
+                resultsArea.innerHTML = `<span style="color: var(--admin-rose);">${escapeHtml(data.detail || 'SQL Error')}</span>`;
+            }
+        } catch (err) {
+            resultsArea.innerHTML = `<span style="color: var(--admin-rose);">Network error executing SQL.</span>`;
+        }
+    });
+
+    // ──────────────────────────────────────────────
+    // API KEY MODAL
+    // ──────────────────────────────────────────────
+    document.getElementById('quickKeyModalBtn').addEventListener('click', () => {
+        document.getElementById('newApiKeyInput').value = '';
+        apiKeyModal.classList.remove('hidden');
+    });
+    document.getElementById('topApiKeyPill').addEventListener('click', () => {
+        document.getElementById('newApiKeyInput').value = '';
+        apiKeyModal.classList.remove('hidden');
+    });
+    document.getElementById('closeApiKeyModalBtn').addEventListener('click', () => apiKeyModal.classList.add('hidden'));
+    document.getElementById('cancelApiKeyBtn').addEventListener('click', () => apiKeyModal.classList.add('hidden'));
+
+    document.getElementById('saveApiKeyBtn').addEventListener('click', async () => {
+        const key = document.getElementById('newApiKeyInput').value.trim();
+        if (!key) {
+            showToast("Please enter an API key", "error");
+            return;
+        }
+
+        try {
+            const res = await fetch('/api/config/key', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': state.secret },
+                body: JSON.stringify({ api_key: key })
+            });
+            if (res.ok) {
+                showToast("Gemini API key updated and verified!");
+                apiKeyModal.classList.add('hidden');
+                fetchOverviewData();
+            } else {
+                const err = await res.json();
+                showToast(err.detail || "Invalid API key", "error");
+            }
+        } catch (err) {
+            showToast("Network error saving key", "error");
+        }
+    });
+
+    // ──────────────────────────────────────────────
+    // STUDENT INDIVIDUAL RATE LIMIT MODAL
+    // ──────────────────────────────────────────────
+    const studentRateLimitModal = document.getElementById('studentRateLimitModal');
+
+    window.openStudentRateLimitModal = async function(studentId, name, roll) {
+        document.getElementById('studentRateLimitStudentId').value = studentId;
+        document.getElementById('studentRateLimitModalTitle').textContent = `Guidance Limit: ${name}`;
+        document.getElementById('studentRateLimitMeta').textContent = `Roll No: ${roll} | Student ID: ${studentId}`;
+
+        try {
+            const res = await fetch(`/api/admin/students/${studentId}/ratelimit`, {
+                headers: { 'X-Admin-Secret': state.secret }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                const rl = data.rate_limit || {};
+                document.getElementById('studentRateLimitUseCustom').checked = Boolean(rl.use_custom);
+                document.getElementById('studentRateLimitCooldown').value = rl.cooldown_seconds !== undefined ? rl.cooldown_seconds : 0.0;
+                document.getElementById('studentRateLimitMaxGuidance').value = rl.daily_guidance_limit !== undefined ? rl.daily_guidance_limit : (rl.max_guidance_per_problem || 50);
+                document.getElementById('studentRateLimitIsExempt').checked = Boolean(rl.is_exempt);
+                studentRateLimitModal.classList.remove('hidden');
+            }
+        } catch (err) {
+            showToast("Error loading student rate limits", "error");
+        }
+    };
+
+    document.getElementById('closeStudentRateLimitModalBtn').addEventListener('click', () => studentRateLimitModal.classList.add('hidden'));
+    document.getElementById('cancelStudentRateLimitBtn').addEventListener('click', () => studentRateLimitModal.classList.add('hidden'));
+
+    document.getElementById('saveStudentRateLimitBtn').addEventListener('click', async () => {
+        const studentId = document.getElementById('studentRateLimitStudentId').value;
+        const use_custom = document.getElementById('studentRateLimitUseCustom').checked;
+        const cooldown_seconds = parseFloat(document.getElementById('studentRateLimitCooldown').value) || 0.0;
+        const daily_guidance_limit = parseInt(document.getElementById('studentRateLimitMaxGuidance').value, 10) || 0;
+        const is_exempt = document.getElementById('studentRateLimitIsExempt').checked;
+
+        try {
+            const res = await fetch(`/api/admin/students/${studentId}/ratelimit`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': state.secret },
+                body: JSON.stringify({ use_custom, cooldown_seconds, daily_guidance_limit, max_guidance_per_problem: daily_guidance_limit, is_exempt })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                showToast(data.message || "Student rate limits updated!");
+                studentRateLimitModal.classList.add('hidden');
+                loadRateLimitConfig();
+            } else {
+                showToast("Failed to save student limits", "error");
+            }
+        } catch (err) {
+            showToast("Network error saving student limits", "error");
+        }
+    });
+
+
+    document.getElementById('revertStudentRateLimitBtn').addEventListener('click', async () => {
+        const studentId = document.getElementById('studentRateLimitStudentId').value;
+        try {
+            const res = await fetch(`/api/admin/students/${studentId}/ratelimit`, {
+                method: 'DELETE',
+                headers: { 'X-Admin-Secret': state.secret }
+            });
+            if (res.ok) {
+                showToast("Student reverted to global rate limit policy.");
+                studentRateLimitModal.classList.add('hidden');
+                loadRateLimitConfig();
+            }
+        } catch (err) {
+            showToast("Network error reverting limits", "error");
+        }
+    });
+
+    // ──────────────────────────────────────────────
+    // EVENT LISTENERS & MODAL CLOSE
+    // ──────────────────────────────────────────────
+    function setupEventListeners() {
+        document.getElementById('modalCloseBtn').addEventListener('click', () => studentModal.classList.add('hidden'));
+
+        // Problem Studio Filters
+        const pSearch = document.getElementById('problemSearchInput');
+        const pTopic = document.getElementById('problemTopicFilter');
+        const pDiff = document.getElementById('problemDifficultyFilter');
+        if (pSearch) pSearch.addEventListener('input', renderProblemsTable);
+        if (pTopic) pTopic.addEventListener('change', renderProblemsTable);
+        if (pDiff) pDiff.addEventListener('change', renderProblemsTable);
+
+        // Click outside modal or drawer to close
+        [studentModal, problemDrawer, resetPwModal, bulkResetModal, addStudentModal, topicModal, apiKeyModal, studentRateLimitModal].forEach(m => {
+            if (m) {
+                m.addEventListener('click', (e) => {
+                    if (e.target === m) m.classList.add('hidden');
+                });
+            }
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                [studentModal, problemDrawer, resetPwModal, bulkResetModal, addStudentModal, topicModal, apiKeyModal, studentRateLimitModal].forEach(m => {
+                    if (m) m.classList.add('hidden');
+                });
+            }
+        });
+    }
+
+    // Check existing secret on load
+    if (state.secret) {
+        verifyAndInitialize(state.secret);
     }
 });

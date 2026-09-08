@@ -98,6 +98,39 @@ def get_student_progress(response: Response, student_id: int = Depends(get_curre
     return {"progress": progress}
 
 
+@router.get("/problems")
+def get_all_problems():
+    """Return flat list of all active practice problems."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT id, topic, title, difficulty, concepts, starter_code
+    FROM problems
+    WHERE COALESCE(is_active, 1) = 1
+    ORDER BY COALESCE(order_index, 0) ASC, id ASC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+
+    problems = []
+    for r in rows:
+        concepts = []
+        if r["concepts"]:
+            try:
+                concepts = json.loads(r["concepts"])
+            except Exception:
+                concepts = []
+        problems.append({
+            "id": r["id"],
+            "topic": r["topic"],
+            "title": r["title"],
+            "difficulty": r["difficulty"],
+            "concepts": concepts,
+            "starter_code": r["starter_code"] or ""
+        })
+    return {"problems": problems}
+
+
 @router.get("/problems/{problem_id}")
 def get_problem(problem_id: int):
     conn = get_connection()

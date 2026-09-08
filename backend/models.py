@@ -153,3 +153,30 @@ class BulkResetPasswordRequest(BaseModel):
     section: Optional[str] = None
     default_password: Optional[str] = "123"
 
+
+# ─────────────────────────────────────────────
+# ADMIN GROUP 4: LAB OVERRIDES & SESSIONS
+# ─────────────────────────────────────────────
+
+class ResetSessionRequest(BaseModel):
+    clear_history: Optional[bool] = False
+
+
+# ─────────────────────────────────────────────
+# ADMIN GROUP 6: RATE LIMITING & SYSTEM
+# ─────────────────────────────────────────────
+
+class RateLimitConfigRequest(BaseModel):
+    enabled: Optional[bool] = True
+    daily_guidance_limit: Optional[int] = 50  # 0 = unlimited
+    max_guidance_per_problem: Optional[int] = None  # backward-compat alias
+    cooldown_seconds: Optional[float] = 0.0
+
+
+class StudentRateLimitRequest(BaseModel):
+    use_custom: Optional[bool] = True
+    daily_guidance_limit: Optional[int] = 50
+    max_guidance_per_problem: Optional[int] = None  # backward-compat alias
+    cooldown_seconds: Optional[float] = 0.0
+    is_exempt: Optional[bool] = False
+

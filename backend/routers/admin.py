@@ -6,7 +6,9 @@ import os
 import time
 import json
 import psutil
-from fastapi import APIRouter, HTTPException, Depends, Query
+import csv
+import io
+from fastapi import APIRouter, HTTPException, Depends, Query, Response
 from fastapi.responses import FileResponse
 
 try:
@@ -15,7 +17,8 @@ try:
         SetKeyRequest, TeacherInstructionsRequest, SqlQueryRequest,
         CreateProblemRequest, UpdateProblemRequest, ReorderProblemsRequest,
         CreateTopicRequest, RenameTopicRequest,
-        CreateStudentRequest, UpdateStudentRequest, ResetPasswordRequest, BulkResetPasswordRequest
+        CreateStudentRequest, UpdateStudentRequest, ResetPasswordRequest, BulkResetPasswordRequest,
+        ResetSessionRequest, RateLimitConfigRequest, StudentRateLimitRequest
     )
     from pymentor.backend.deps import verify_admin
     from pymentor.backend import state
@@ -31,7 +34,8 @@ except ImportError:
         SetKeyRequest, TeacherInstructionsRequest, SqlQueryRequest,
         CreateProblemRequest, UpdateProblemRequest, ReorderProblemsRequest,
         CreateTopicRequest, RenameTopicRequest,
-        CreateStudentRequest, UpdateStudentRequest, ResetPasswordRequest, BulkResetPasswordRequest
+        CreateStudentRequest, UpdateStudentRequest, ResetPasswordRequest, BulkResetPasswordRequest,
+        ResetSessionRequest, RateLimitConfigRequest, StudentRateLimitRequest
     )
     from backend.deps import verify_admin
     from backend import state
@@ -436,6 +440,50 @@ def execute_sql(req: SqlQueryRequest, admin: bool = Depends(verify_admin)):
 # ─────────────────────────────────────────────
 # ADMIN GROUP 1: PROBLEM / QUESTION MANAGEMENT
 # ─────────────────────────────────────────────
+
+@router.get("/admin/problems")
+def list_admin_problems(
+    topic: str = Query(None, description="Filter by topic name"),
+    include_inactive: bool = Query(True, description="Whether to include soft-deleted problems"),
+    admin: bool = Depends(verify_admin)
+):
+    """List all problems with metadata, difficulty, teacher instructions, order index, and active status."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    query = """
+        SELECT id, topic, title, difficulty, concepts,
+               COALESCE(teacher_instructions, '') as teacher_instructions,
+               COALESCE(is_active, 1) as is_active,
+               COALESCE(order_index, 0) as order_index
+        FROM problems
+    """
+    params = []
+    conditions = []
+    if not include_inactive:
+        conditions.append("COALESCE(is_active, 1) = 1")
+    if topic:
+        conditions.append("topic = ?")
+        params.append(topic.strip())
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY COALESCE(order_index, 0) ASC, id ASC"
+
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+
+    problems = []
+    for r in rows:
+        row_dict = dict(r)
+        try:
+            row_dict["concepts"] = json.loads(row_dict["concepts"]) if row_dict["concepts"] else []
+        except Exception:
+            row_dict["concepts"] = []
+        row_dict["is_active"] = bool(row_dict["is_active"])
+        problems.append(row_dict)
+
+    return {"problems": problems, "total": len(problems)}
+
 
 @router.post("/admin/problems")
 def create_problem(req: CreateProblemRequest, admin: bool = Depends(verify_admin)):
@@ -1017,4 +1065,351 @@ def force_restore_github(admin: bool = Depends(verify_admin)):
     """Manually pull and restore the latest database from GitHub or peer host."""
     sync_from_github_on_startup()
     return {"status": "success", "message": "Synchronized latest database from GitHub/Host."}
+
+
+# ─────────────────────────────────────────────
+# ADMIN GROUP 4: LIVE LAB SESSION & GRADING OVERRIDES
+# ─────────────────────────────────────────────
+
+@router.post("/admin/sessions/{session_id}/reset")
+def reset_session(
+    session_id: int,
+    req: ResetSessionRequest = None,
+    admin: bool = Depends(verify_admin)
+):
+    """
+    Clear a student's previous submissions and active code on a specific problem
+    so they can start fresh during lab.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, student_id, problem_id, status FROM sessions WHERE id = ?", (session_id,))
+    session = cursor.fetchone()
+    if not session:
+        conn.close()
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+    clear_hist = req.clear_history if req else False
+    if clear_hist:
+        cursor.execute("DELETE FROM submissions WHERE session_id = ?", (session_id,))
+
+    cursor.execute("""
+        UPDATE sessions 
+        SET status = 'in_progress', last_code = '', time_spent_seconds = 0,
+            run_count = 0, updated_at = datetime('now', 'localtime')
+        WHERE id = ?
+    """, (session_id,))
+    conn.commit()
+    conn.close()
+
+    return {
+        "status": "success",
+        "session_id": session_id,
+        "message": f"Session #{session_id} has been reset to fresh state.",
+        "history_cleared": clear_hist
+    }
+
+
+@router.post("/admin/sessions/{session_id}/override-pass")
+def override_pass_session(session_id: int, admin: bool = Depends(verify_admin)):
+    """
+    Manually mark a problem session as 'solved' (Teacher Override).
+    Useful when AI is overly pedantic or student demonstrated solution in person.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT s.id, s.student_id, s.problem_id, s.last_code, st.name as student_name, p.title as problem_title
+        FROM sessions s
+        JOIN students st ON s.student_id = st.id
+        JOIN problems p ON s.problem_id = p.id
+        WHERE s.id = ?
+    """, (session_id,))
+    session = cursor.fetchone()
+    if not session:
+        conn.close()
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+    cursor.execute("""
+        UPDATE sessions 
+        SET status = 'solved', updated_at = datetime('now', 'localtime')
+        WHERE id = ?
+    """, (session_id,))
+
+    cursor.execute("SELECT COUNT(*) as c FROM submissions WHERE session_id = ?", (session_id,))
+    attempt_num = cursor.fetchone()["c"] + 1
+
+    cursor.execute("""
+        INSERT INTO submissions (
+            session_id, code, ai_response, is_correct, attempt_number,
+            model_used, simulated_output, created_at
+        ) VALUES (?, ?, ?, 1, ?, 'teacher-override', 'Manually verified by lab instructor', datetime('now', 'localtime'))
+    """, (session_id, session["last_code"] or "# Manually passed by instructor", "Manual pass granted by teacher.", attempt_num))
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "status": "success",
+        "session_id": session_id,
+        "student_name": session["student_name"],
+        "problem_title": session["problem_title"],
+        "message": f"Problem '{session['problem_title']}' manually marked as Solved."
+    }
+
+
+# ─────────────────────────────────────────────
+# ADMIN GROUP 5: DATA EXPORT & REPORTS
+# ─────────────────────────────────────────────
+
+@router.get("/admin/export/grades.csv")
+def export_grades_csv(section: str = Query(None), admin: bool = Depends(verify_admin)):
+    """Export student roster with grade metrics, problems solved, and total time spent as CSV."""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    filters = ["1=1"]
+    params = []
+    if section:
+        filters.append("st.section = ?")
+        params.append(section.strip().upper())
+
+    cursor.execute(f"""
+        SELECT 
+            st.roll_no, st.name, st.section, COALESCE(st.email, '') as email,
+            COUNT(DISTINCT s.problem_id) as problems_attempted,
+            COUNT(DISTINCT CASE WHEN s.status = 'solved' THEN s.problem_id END) as problems_solved,
+            COALESCE(SUM(s.run_count), 0) as total_runs,
+            ROUND(COALESCE(SUM(s.time_spent_seconds), 0) / 60.0, 1) as time_spent_minutes,
+            (SELECT COUNT(*) FROM submissions sub JOIN sessions ses ON sub.session_id = ses.id WHERE ses.student_id = st.id) as guidance_requests,
+            MAX(COALESCE(s.updated_at, st.created_at)) as last_active
+        FROM students st
+        LEFT JOIN sessions s ON st.id = s.student_id
+        WHERE {" AND ".join(filters)}
+        GROUP BY st.id
+        ORDER BY st.section ASC, CAST(st.roll_no AS INTEGER) ASC
+    """, params)
+    rows = cursor.fetchall()
+    conn.close()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Roll No", "Student Name", "Section", "Email",
+        "Problems Attempted", "Problems Solved", "Run Clicks",
+        "Time Spent (Minutes)", "AI Guidance Requests", "Last Active"
+    ])
+    for r in rows:
+        writer.writerow([
+            r["roll_no"], r["name"], r["section"], r["email"],
+            r["problems_attempted"], r["problems_solved"], r["total_runs"],
+            r["time_spent_minutes"], r["guidance_requests"], r["last_active"]
+        ])
+
+    csv_data = output.getvalue()
+    filename = f"pymentor_grades_{section.upper() if section else 'all'}_{time.strftime('%Y%m%d_%H%M')}.csv"
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+@router.get("/admin/export/submissions.csv")
+def export_submissions_csv(admin: bool = Depends(verify_admin)):
+    """Export full submission log history (every code attempt and feedback) as CSV."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT 
+            sub.id as submission_id,
+            st.roll_no, st.name as student_name, st.section,
+            p.title as problem_title, p.topic, p.difficulty,
+            sub.attempt_number, sub.is_correct, sub.model_used,
+            sub.created_at, sub.code, sub.simulated_output, sub.ai_response
+        FROM submissions sub
+        JOIN sessions ses ON sub.session_id = ses.id
+        JOIN students st ON ses.student_id = st.id
+        JOIN problems p ON ses.problem_id = p.id
+        ORDER BY sub.id DESC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Submission ID", "Roll No", "Student Name", "Section",
+        "Problem Title", "Topic", "Difficulty", "Attempt Number",
+        "Verdict (Solved)", "Model Used", "Timestamp", "Code Submitted",
+        "Terminal Output", "AI Feedback"
+    ])
+    for r in rows:
+        verdict = "SOLVED" if r["is_correct"] == 1 else "IN_PROGRESS"
+        writer.writerow([
+            r["submission_id"], r["roll_no"], r["student_name"], r["section"],
+            r["problem_title"], r["topic"], r["difficulty"], r["attempt_number"],
+            verdict, r["model_used"], r["created_at"], r["code"],
+            r["simulated_output"], r["ai_response"]
+        ])
+
+    csv_data = output.getvalue()
+    filename = f"pymentor_submissions_{time.strftime('%Y%m%d_%H%M')}.csv"
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+# ─────────────────────────────────────────────
+# ADMIN GROUP 6: RATE LIMITING & SYSTEM SETTINGS
+# ─────────────────────────────────────────────
+
+# Reference shared state for guidance rate limiting
+GUIDANCE_RATE_LIMIT_CONFIG = state.guidance_rate_limit_config
+STUDENT_RATE_LIMIT_OVERRIDES = state.student_rate_limit_overrides
+
+
+@router.get("/admin/config/ratelimit")
+def get_rate_limit_config(admin: bool = Depends(verify_admin)):
+    """Get current global guidance rate limit settings and override count."""
+    config_copy = dict(GUIDANCE_RATE_LIMIT_CONFIG)
+    config_copy["max_guidance_per_problem"] = config_copy.get("daily_guidance_limit", 20)
+    config_copy["custom_overrides_count"] = len(STUDENT_RATE_LIMIT_OVERRIDES)
+    return config_copy
+
+
+@router.post("/admin/config/ratelimit")
+def update_rate_limit_config(req: RateLimitConfigRequest, admin: bool = Depends(verify_admin)):
+    """Update global guidance rate limit settings and persist them to SQLite."""
+    if req.enabled is not None:
+        GUIDANCE_RATE_LIMIT_CONFIG["enabled"] = req.enabled
+    if req.daily_guidance_limit is not None:
+        GUIDANCE_RATE_LIMIT_CONFIG["daily_guidance_limit"] = max(0, req.daily_guidance_limit)
+    elif req.max_guidance_per_problem is not None:
+        GUIDANCE_RATE_LIMIT_CONFIG["daily_guidance_limit"] = max(0, req.max_guidance_per_problem)
+    if req.cooldown_seconds is not None:
+        GUIDANCE_RATE_LIMIT_CONFIG["cooldown_seconds"] = max(0.0, req.cooldown_seconds)
+
+    # Persist in SQLite system_config table so changes survive server restarts
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO system_config (key, value, updated_at)
+            VALUES ('guidance_rate_limit_config', ?, datetime('now', 'localtime'))
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = datetime('now', 'localtime')
+        """, (json.dumps(GUIDANCE_RATE_LIMIT_CONFIG),))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.warning(f"Could not persist rate limit config to SQLite: {e}")
+
+    return {
+        "status": "success",
+        "config": GUIDANCE_RATE_LIMIT_CONFIG,
+        "message": f"Global daily guidance limit preferences saved ({GUIDANCE_RATE_LIMIT_CONFIG['daily_guidance_limit']} hints/day)."
+    }
+
+
+@router.get("/admin/students/{student_id}/ratelimit")
+def get_student_ratelimit(student_id: int, admin: bool = Depends(verify_admin)):
+    """Get individual rate limit configuration for a specific student."""
+    override = STUDENT_RATE_LIMIT_OVERRIDES.get(student_id)
+    daily_default = GUIDANCE_RATE_LIMIT_CONFIG.get("daily_guidance_limit", 50)
+    if not override:
+        return {
+            "student_id": student_id,
+            "use_custom": False,
+            "daily_guidance_limit": daily_default,
+            "max_guidance_per_problem": daily_default,
+            "cooldown_seconds": 0.0,
+            "is_exempt": False,
+            "is_global_default": True
+        }
+    daily_limit = override.get("daily_guidance_limit", override.get("max_guidance_per_problem", daily_default))
+    return {
+        "student_id": student_id,
+        "use_custom": override.get("use_custom", True),
+        "daily_guidance_limit": daily_limit,
+        "max_guidance_per_problem": daily_limit,
+        "cooldown_seconds": override.get("cooldown_seconds", 0.0),
+        "is_exempt": override.get("is_exempt", False),
+        "is_global_default": False
+    }
+
+
+@router.post("/admin/students/{student_id}/ratelimit")
+def set_student_ratelimit(student_id: int, req: StudentRateLimitRequest, admin: bool = Depends(verify_admin)):
+    """Configure individual custom daily rate limit override for a specific student."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, roll_no, name FROM students WHERE id = ?", (student_id,))
+    student = cursor.fetchone()
+    if not student:
+        conn.close()
+        raise HTTPException(status_code=404, detail=f"Student ID {student_id} not found")
+
+    use_custom = req.use_custom if req.use_custom is not None else True
+    daily_default = GUIDANCE_RATE_LIMIT_CONFIG.get("daily_guidance_limit", 50)
+    daily_limit = req.daily_guidance_limit if req.daily_guidance_limit is not None else (req.max_guidance_per_problem or daily_default)
+    daily_limit = max(0, daily_limit)
+    cooldown = max(0.0, req.cooldown_seconds) if req.cooldown_seconds is not None else 0.0
+    is_exempt = bool(req.is_exempt)
+
+    STUDENT_RATE_LIMIT_OVERRIDES[student_id] = {
+        "use_custom": use_custom,
+        "daily_guidance_limit": daily_limit,
+        "max_guidance_per_problem": daily_limit,
+        "cooldown_seconds": cooldown,
+        "is_exempt": is_exempt
+    }
+
+    # Persist in SQLite
+    cursor.execute("""
+        INSERT INTO student_rate_limits (student_id, use_custom, daily_guidance_limit, cooldown_seconds, is_exempt, updated_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime'))
+        ON CONFLICT(student_id) DO UPDATE SET
+            use_custom = excluded.use_custom,
+            daily_guidance_limit = excluded.daily_guidance_limit,
+            cooldown_seconds = excluded.cooldown_seconds,
+            is_exempt = excluded.is_exempt,
+            updated_at = datetime('now', 'localtime')
+    """, (student_id, 1 if use_custom else 0, daily_limit, cooldown, 1 if is_exempt else 0))
+    conn.commit()
+    conn.close()
+
+    status_desc = "Exempt from limits" if is_exempt else (f"{daily_limit or 'unlimited'} hints/day" if use_custom else "Global policy")
+
+    return {
+        "status": "success",
+        "student_id": student_id,
+        "student_name": student["name"],
+        "roll_no": student["roll_no"],
+        "rate_limit": STUDENT_RATE_LIMIT_OVERRIDES[student_id],
+        "message": f"Individual rate limit configured for {student['name']}: {status_desc}."
+    }
+
+
+@router.delete("/admin/students/{student_id}/ratelimit")
+def clear_student_ratelimit(student_id: int, admin: bool = Depends(verify_admin)):
+    """Reset a student's individual rate limit override back to global default."""
+    if student_id in STUDENT_RATE_LIMIT_OVERRIDES:
+        del STUDENT_RATE_LIMIT_OVERRIDES[student_id]
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM student_rate_limits WHERE student_id = ?", (student_id,))
+    conn.commit()
+    conn.close()
+
+    return {
+        "status": "success",
+        "student_id": student_id,
+        "message": "Student reverted to global rate limit policy."
+    }
+
 

@@ -124,7 +124,7 @@
                 </button>
                 <button id="guidanceBtn" class="btn-guidance">
                     <span id="guidanceIcon">&#x1F4AC;</span>
-                    <span id="guidanceText">Get Guidance</span>
+                    <span id="guidanceText">Submit / Guidance</span>
                     <div class="spinner hidden" id="guidanceSpinner"></div>
                 </button>
             </div>
@@ -151,12 +151,15 @@
                 <div class="guidance-panel">
                     <div class="panel-header">
                         <span class="panel-title">Guidance</span>
-                        <span id="guidanceStatus" class="status-pending">—</span>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span id="dailyQuotaBadge" class="quota-badge hidden">💡 0 / 20 Used Today</span>
+                            <span id="guidanceStatus" class="status-pending">—</span>
+                        </div>
                     </div>
                     <div class="guidance-body" id="guidanceBody">
                         <div class="placeholder-text">
                             Run your code first, then click<br>
-                            <strong>Get Guidance</strong> for step-by-step feedback.
+                            <strong>Submit / Guidance</strong> for evaluation & feedback.
                         </div>
                     </div>
                 </div>

@@ -14,7 +14,7 @@ try:
         SessionStartRequest, SessionSaveRequest, HeartbeatRequest, SubmitCodeRequest
     )
     from pymentor.backend.deps import require_password_changed
-    from pymentor.backend.database import get_connection, log_event
+    from pymentor.backend.database import get_connection, log_event, get_student_daily_quota
     from pymentor.backend.ai_mentor import evaluate_code
 except ImportError:
     from backend.config import SUBMIT_COOLDOWN_SECONDS
@@ -23,7 +23,7 @@ except ImportError:
         SessionStartRequest, SessionSaveRequest, HeartbeatRequest, SubmitCodeRequest
     )
     from backend.deps import require_password_changed
-    from backend.database import get_connection, log_event
+    from backend.database import get_connection, log_event, get_student_daily_quota
     from backend.ai_mentor import evaluate_code
 
 logger = logging.getLogger("pymentor")
@@ -92,7 +92,8 @@ def start_session(req: SessionStartRequest, student_id: int = Depends(require_pa
         "is_solved": is_solved,
         "last_code": last_code,
         "time_spent_seconds": time_spent_seconds,
-        "history_count": len(submissions)
+        "history_count": len(submissions),
+        "quota": get_student_daily_quota(student_id)
     }
 
 
@@ -219,23 +220,14 @@ def session_heartbeat(req: HeartbeatRequest, student_id: int = Depends(require_p
 
 @router.post("/session/submit")
 def submit_code(req: SubmitCodeRequest, student_id: int = Depends(require_password_changed)):
-    # Enforce submit cooldown per student to prevent spamming Gemini API
-    now = time.time()
-    last_submit = state.submit_cooldowns.get(student_id, 0.0)
-    if now - last_submit < SUBMIT_COOLDOWN_SECONDS:
-        remaining = round(SUBMIT_COOLDOWN_SECONDS - (now - last_submit), 1)
-        raise HTTPException(
-            status_code=429,
-            detail=f"Please wait {remaining}s before requesting guidance again."
-        )
-    state.submit_cooldowns[student_id] = now
-
-    # Opportunistic pruning of cooldown dictionary
-    if len(state.submit_cooldowns) > 1000:
-        cutoff = now - 60
-        for sid in list(state.submit_cooldowns.keys()):
-            if state.submit_cooldowns[sid] < cutoff:
-                del state.submit_cooldowns[sid]
+    # Check Student's Daily Guidance Quota
+    quota = get_student_daily_quota(student_id)
+    if not quota["is_exempt"] and quota["is_enabled"] and quota["limit"] > 0:
+        if quota["used"] >= quota["limit"]:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Daily guidance limit reached ({quota['limit']} hints max today). Take time to review your code or ask your instructor for help."
+            )
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -252,6 +244,8 @@ def submit_code(req: SubmitCodeRequest, student_id: int = Depends(require_passwo
     if not session:
         conn.close()
         raise HTTPException(status_code=404, detail="Session not found or not authorized")
+
+    problem_id = session["problem_id"]
 
     code = req.code.strip()
     if not code:
@@ -350,11 +344,15 @@ def submit_code(req: SubmitCodeRequest, student_id: int = Depends(require_passwo
     result_label = "SOLVED" if is_correct else "IN_PROGRESS"
     logger.info(f"[EVAL] Submit Attempt #{attempt_number}: Student='{session['student_name']}' (Sec {session['student_section']}, Roll {session['student_roll']}) Problem='{problem['title']}' -> Result={result_label} Model='{model_used}' ({eval_duration_ms}ms)")
 
+    # Stamp cooldown clock at guidance completion so student has full cooldown window after reading hint
+    state.submit_cooldowns[student_id] = time.time()
+
     return {
         "is_correct": bool(is_correct),
         "feedback": feedback,
         "attempt_number": attempt_number,
         "model_used": model_used,
         "time_spent_seconds": total_time_spent,
-        "error": eval_result.get("error")
+        "error": eval_result.get("error"),
+        "quota": get_student_daily_quota(student_id)
     }

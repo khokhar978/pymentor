@@ -17,3 +17,13 @@ submit_cooldowns = {}
 
 # Rolling timestamps of recent HTTP requests for RPM metrics
 request_times = deque(maxlen=5000)
+
+# Global guidance rate limiting settings
+guidance_rate_limit_config = {
+    "enabled": True,
+    "daily_guidance_limit": 50,  # 50 AI guidance requests per calendar day (0 = unlimited)
+    "cooldown_seconds": 0.0
+}
+
+# In-memory store of individual student overrides: student_id -> dict
+student_rate_limit_overrides = {}

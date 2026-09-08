@@ -60,8 +60,7 @@ const el = {
     outputStatus:        document.getElementById('outputStatus'),
     guidanceBody:        document.getElementById('guidanceBody'),
     guidanceStatus:      document.getElementById('guidanceStatus'),
-
-
+    dailyQuotaBadge:     document.getElementById('dailyQuotaBadge'),
 };
 
 // ──────────────────────────────────────────────
@@ -452,8 +451,8 @@ function updateGuidanceBtnState() {
 
     // Code matches last run — guidance is allowed
     el.guidanceBtn.disabled = false;
-    el.guidanceBtn.title = 'Get AI mentor guidance on your current code';
-    if (el.guidanceText) el.guidanceText.textContent = 'Get Guidance';
+    el.guidanceBtn.title = 'Submit solution for evaluation & AI mentor guidance';
+    if (el.guidanceText) el.guidanceText.textContent = 'Submit / Guidance';
 }
 
 // ──────────────────────────────────────────────
@@ -852,12 +851,53 @@ async function startSession() {
             el.guidanceStatus.textContent = 'Pending';
         }
 
+        // Update daily guidance quota badge
+        if (session.quota) {
+            updateQuotaDisplay(session.quota);
+        }
+
         // Initialize practice timer (ticks once student interacts)
         startActiveTimer(session.time_spent_seconds || 0, session.is_solved);
 
         // Component 1: Initialize guidance button state (disabled until code is run)
         updateGuidanceBtnState();
     } catch (err) { console.error('Session error:', err); }
+}
+
+function updateQuotaDisplay(quota) {
+    if (!el.dailyQuotaBadge || !quota) return;
+
+    if (quota.is_exempt) {
+        el.dailyQuotaBadge.className = 'quota-badge quota-exempt';
+        el.dailyQuotaBadge.innerHTML = '✨ Unlimited Hints';
+        el.dailyQuotaBadge.title = 'You have unlimited AI guidance for this lab session.';
+        el.dailyQuotaBadge.classList.remove('hidden');
+        return;
+    }
+
+    if (!quota.is_enabled || !quota.limit || quota.limit <= 0) {
+        el.dailyQuotaBadge.classList.add('hidden');
+        return;
+    }
+
+    el.dailyQuotaBadge.classList.remove('hidden');
+    const used = quota.used || 0;
+    const limit = quota.limit;
+    const remaining = quota.remaining !== undefined ? quota.remaining : Math.max(0, limit - used);
+
+    if (remaining <= 0) {
+        el.dailyQuotaBadge.className = 'quota-badge quota-danger';
+        el.dailyQuotaBadge.innerHTML = `🔒 Daily Limit Reached (${limit}/${limit})`;
+        el.dailyQuotaBadge.title = `You have used all ${limit} guidance requests for today.`;
+    } else if (remaining <= 3) {
+        el.dailyQuotaBadge.className = 'quota-badge quota-warning';
+        el.dailyQuotaBadge.innerHTML = `⚠️ ${remaining} Left Today`;
+        el.dailyQuotaBadge.title = `${used} of ${limit} hints used today (${remaining} remaining).`;
+    } else {
+        el.dailyQuotaBadge.className = 'quota-badge quota-normal';
+        el.dailyQuotaBadge.innerHTML = `💡 ${used} / ${limit} Used Today`;
+        el.dailyQuotaBadge.title = `${used} of ${limit} hints used today (${remaining} remaining).`;
+    }
 }
 
 function updateAttemptDisplay() {
@@ -888,7 +928,7 @@ async function getGuidance() {
 
     state.isGuidanceLoading = true;
     el.guidanceBtn.disabled      = true;
-    el.guidanceText.textContent  = 'Loading...';
+    el.guidanceText.textContent  = 'Evaluating...';
     el.guidanceSpinner.classList.remove('hidden');
 
     el.guidanceBody.innerHTML   = '<div class="loading-guidance"><div class="spinner-dark"></div>&nbsp;Analyzing your code...</div>';
@@ -908,6 +948,11 @@ async function getGuidance() {
         });
         if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Request failed'); }
         const result = await res.json();
+
+        // Update live daily guidance quota badge
+        if (result.quota) {
+            updateQuotaDisplay(result.quota);
+        }
 
         state.attemptsCount = result.attempt_number || (state.attemptsCount + 1);
         updateAttemptDisplay();
@@ -937,6 +982,13 @@ async function getGuidance() {
             el.guidanceStatus.innerHTML = '<span class="status-progress">In Progress</span>';
         }
     } catch (err) {
+        if (err.message && err.message.includes('Daily guidance limit reached')) {
+            if (el.dailyQuotaBadge) {
+                el.dailyQuotaBadge.className = 'quota-badge quota-danger';
+                el.dailyQuotaBadge.innerHTML = '🔒 Daily Limit Reached';
+                el.dailyQuotaBadge.classList.remove('hidden');
+            }
+        }
         el.guidanceBody.innerHTML   = '<div style="color:var(--error);font-size:13px;padding:4px;">' + err.message + '</div>';
         el.guidanceStatus.className   = 'status-pending';
         el.guidanceStatus.textContent = 'Error';

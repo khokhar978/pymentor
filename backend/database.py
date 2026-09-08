@@ -261,8 +261,110 @@ def init_db():
             hashed = hash_password(pwd)
             cursor.execute("UPDATE students SET password = ? WHERE id = ?", (hashed, pid))
 
+    # Table: system_config for persistent platform settings (e.g. rate limits, admin preferences)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS system_config (
+        key TEXT PRIMARY KEY,
+        value TEXT,
+        updated_at TIMESTAMP DEFAULT (datetime('now', 'localtime'))
+    );
+    """)
+
+    # Load persisted global guidance rate limit config
+    try:
+        cursor.execute("SELECT value FROM system_config WHERE key = 'guidance_rate_limit_config'")
+        row = cursor.fetchone()
+        if row and row["value"]:
+            try:
+                from pymentor.backend import state
+            except ImportError:
+                from backend import state
+            saved_cfg = json.loads(row["value"])
+            state.guidance_rate_limit_config.update(saved_cfg)
+    except Exception as e:
+        logging.getLogger("pymentor.database").warning(f"Could not load global rate limit config: {e}")
+
+    # Table: student_rate_limits for persistent per-student override storage
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS student_rate_limits (
+        student_id INTEGER PRIMARY KEY,
+        use_custom INTEGER DEFAULT 1,
+        daily_guidance_limit INTEGER DEFAULT 50,
+        cooldown_seconds REAL DEFAULT 0.0,
+        is_exempt INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT (datetime('now', 'localtime')),
+        updated_at TIMESTAMP DEFAULT (datetime('now', 'localtime')),
+        FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+    );
+    """)
+
+    try:
+        cursor.execute("ALTER TABLE student_rate_limits ADD COLUMN daily_guidance_limit INTEGER DEFAULT 50")
+    except Exception:
+        pass
+
+    # Populate in-memory state overrides from database
+    try:
+        cursor.execute("SELECT student_id, use_custom, daily_guidance_limit, cooldown_seconds, is_exempt FROM student_rate_limits")
+        try:
+            from pymentor.backend import state
+        except ImportError:
+            from backend import state
+        for r in cursor.fetchall():
+            state.student_rate_limit_overrides[r["student_id"]] = {
+                "use_custom": bool(r["use_custom"]),
+                "daily_guidance_limit": int(r["daily_guidance_limit"]) if r["daily_guidance_limit"] is not None else 50,
+                "cooldown_seconds": float(r["cooldown_seconds"] or 0.0),
+                "is_exempt": bool(r["is_exempt"])
+            }
+    except Exception as e:
+        logging.getLogger("pymentor.database").warning(f"Could not load student rate limits into state: {e}")
+
     conn.commit()
     conn.close()
+
+
+def get_student_daily_quota(student_id: int) -> dict:
+    """Calculates daily guidance consumption and remaining quota for a student."""
+    try:
+        from pymentor.backend import state
+    except ImportError:
+        from backend import state
+
+    rate_cfg = state.guidance_rate_limit_config
+    override = state.student_rate_limit_overrides.get(student_id)
+
+    is_exempt = bool(override and override.get("is_exempt", False))
+    is_enabled = bool(rate_cfg.get("enabled", True))
+
+    if override and override.get("use_custom", True) and override.get("daily_guidance_limit") is not None:
+        daily_limit = int(override["daily_guidance_limit"])
+    else:
+        daily_limit = int(rate_cfg.get("daily_guidance_limit", 50))
+
+    # Count today's guidance submissions across all problems
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT COUNT(sub.id) as today_count
+        FROM submissions sub
+        JOIN sessions ses ON sub.session_id = ses.id
+        WHERE ses.student_id = ?
+          AND date(sub.created_at) = date('now', 'localtime')
+    """, (student_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    used = row["today_count"] if row else 0
+    remaining = max(0, daily_limit - used) if daily_limit > 0 else 999999
+
+    return {
+        "used": used,
+        "limit": daily_limit,
+        "remaining": remaining,
+        "is_exempt": is_exempt,
+        "is_enabled": is_enabled
+    }
 
 def seed_students(cursor):
     authorized = []

@@ -332,7 +332,7 @@ def evaluate_code(
     logger.error(f"All AI fallback models failed to evaluate submission. Last error: {last_error}")
     return {
         "is_correct": False,
-        "feedback": "AI guidance is temporarily unavailable. Please wait a few moments and click **Get Guidance** again.",
+        "feedback": "AI guidance is temporarily unavailable. Please wait a few moments and click **Submit / Guidance** again.",
         "model_used": "failed",
         "error": "AI service temporarily unavailable",
         # COMPONENT 7: Signal to caller to store placeholder in DB instead of error text
