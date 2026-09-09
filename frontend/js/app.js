@@ -41,7 +41,6 @@ const el = {
     sampleInputText:     document.getElementById('sampleInputText'),
     sampleOutputText:    document.getElementById('sampleOutputText'),
     conceptsList:        document.getElementById('conceptsList'),
-    copyInputBtn:        document.getElementById('copyInputBtn'),
     attemptCounter:      document.getElementById('attemptCounter'),
     timeCounter:         document.getElementById('timeCounter'),
 
@@ -509,13 +508,6 @@ function setupListeners() {
     }
     el.runBtn.addEventListener('click', runCode);
     el.guidanceBtn.addEventListener('click', getGuidance);
-    el.copyInputBtn.addEventListener('click', () => {
-        if (!state.problem) return;
-        navigator.clipboard.writeText(state.problem.sample_input || '').then(() => {
-            el.copyInputBtn.textContent = 'Copied!';
-            setTimeout(() => { el.copyInputBtn.textContent = 'Copy'; }, 1500);
-        });
-    });
 
     // Clicking anywhere in the terminal re-focuses active inline input
     el.outputBody.addEventListener('click', (e) => {
@@ -770,10 +762,66 @@ async function loadProblem(problemId) {
     }
 }
 
+function renderMarkdown(text) {
+    if (!text) return '';
+    if (typeof marked !== 'undefined' && marked.parse) {
+        try {
+            return marked.parse(text);
+        } catch (e) {
+            console.warn('marked.parse failed, using fallback:', e);
+        }
+    }
+    // Robust fallback markdown parser for headers, lists, code pills, and bold text
+    const lines = text.split('\n');
+    let out = [];
+    let inList = false;
+
+    for (let rawLine of lines) {
+        let line = rawLine.trim();
+        if (!line) {
+            if (inList) {
+                out.push('</ul>');
+                inList = false;
+            }
+            continue;
+        }
+
+        // Inline formatting: code pills, bold
+        let formatted = line
+            .replace(/`([^`]+)`/g, '<code>$1</code>')
+            .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+        if (/^###\s+/.test(formatted)) {
+            if (inList) { out.push('</ul>'); inList = false; }
+            out.push(`<h3>${formatted.replace(/^###\s+/, '')}</h3>`);
+        } else if (/^##\s+/.test(formatted)) {
+            if (inList) { out.push('</ul>'); inList = false; }
+            out.push(`<h2>${formatted.replace(/^##\s+/, '')}</h2>`);
+        } else if (/^#\s+/.test(formatted)) {
+            if (inList) { out.push('</ul>'); inList = false; }
+            out.push(`<h1>${formatted.replace(/^#\s+/, '')}</h1>`);
+        } else if (/^[-*]\s+/.test(formatted)) {
+            if (!inList) {
+                out.push('<ul>');
+                inList = true;
+            }
+            out.push(`<li>${formatted.replace(/^[-*]\s+/, '')}</li>`);
+        } else {
+            if (inList) {
+                out.push('</ul>');
+                inList = false;
+            }
+            out.push(`<p>${formatted}</p>`);
+        }
+    }
+    if (inList) out.push('</ul>');
+    return out.join('\n');
+}
+
 function renderProblem(p) {
     el.headerProblemTitle.textContent  = p.title;
     el.problemTitle.textContent        = p.title;
-    el.problemDescription.textContent  = p.description;
+    el.problemDescription.innerHTML    = renderMarkdown(p.description || '');
     el.sampleInputText.textContent     = p.sample_input  || '(none)';
     el.sampleOutputText.textContent    = p.sample_output || '(none)';
 

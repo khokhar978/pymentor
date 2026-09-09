@@ -14,3 +14,5 @@ questions_data_for_claude.*
 questions_refactor_prompt_for_claude.*
 backups/
 *.bak
+*.pre_q30_backup
+pymentor_questions_*.json

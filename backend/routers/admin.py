@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 try:
     from pymentor.backend.config import ENV_PATH
     from pymentor.backend.models import (
-        SetKeyRequest, TeacherInstructionsRequest, SqlQueryRequest,
+        SetKeyRequest, TeacherInstructionsRequest,
         CreateProblemRequest, UpdateProblemRequest, ReorderProblemsRequest,
         CreateTopicRequest, RenameTopicRequest,
         CreateStudentRequest, UpdateStudentRequest, ResetPasswordRequest, BulkResetPasswordRequest,
@@ -31,7 +31,7 @@ try:
 except ImportError:
     from backend.config import ENV_PATH
     from backend.models import (
-        SetKeyRequest, TeacherInstructionsRequest, SqlQueryRequest,
+        SetKeyRequest, TeacherInstructionsRequest,
         CreateProblemRequest, UpdateProblemRequest, ReorderProblemsRequest,
         CreateTopicRequest, RenameTopicRequest,
         CreateStudentRequest, UpdateStudentRequest, ResetPasswordRequest, BulkResetPasswordRequest,
@@ -397,44 +397,6 @@ def clear_problem_instructions(problem_id: int, admin: bool = Depends(verify_adm
         "teacher_instructions": "",
         "is_active": False
     }
-
-
-@router.post("/admin/sql")
-def execute_sql(req: SqlQueryRequest, admin: bool = Depends(verify_admin)):
-    """
-    Execute raw SQL queries or maintenance statements on the database.
-    Protected by X-Admin-Secret. Returns rows for SELECT/PRAGMA, or affected count for DDL/DML.
-    """
-    conn = get_connection()
-    cursor = conn.cursor()
-    try:
-        raw_query = req.query.strip()
-        params = req.params or []
-        cursor.execute(raw_query, params)
-        first_word = raw_query.split()[0].upper() if raw_query.split() else ""
-        if first_word in ("SELECT", "PRAGMA", "EXPLAIN"):
-            rows = [dict(r) for r in cursor.fetchall()]
-            conn.close()
-            return {
-                "status": "success",
-                "type": "query",
-                "query": raw_query,
-                "row_count": len(rows),
-                "rows": rows
-            }
-        else:
-            conn.commit()
-            affected = cursor.rowcount
-            conn.close()
-            return {
-                "status": "success",
-                "type": "execute",
-                "query": raw_query,
-                "rows_affected": affected
-            }
-    except Exception as e:
-        conn.close()
-        raise HTTPException(status_code=400, detail=f"SQL Execution Error: {str(e)}")
 
 
 # ─────────────────────────────────────────────

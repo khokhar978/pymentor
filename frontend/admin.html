@@ -558,18 +558,6 @@
                             </div>
                         </div>
 
-                        <!-- Direct SQL Maintenance Console -->
-                        <div class="panel" style="margin-bottom: 0;">
-                            <div class="panel-header">
-                                <h3 class="panel-title">Raw SQL Maintenance Console</h3>
-                            </div>
-                            <p style="color: var(--admin-text-muted); font-size: 0.82rem; margin: 0 0 0.75rem;">Direct SQLite queries against <code style="color: var(--admin-cyan);">pymentor.db</code> for advanced diagnostics.</p>
-                            <textarea id="rawSqlQueryInput" class="textarea-control" placeholder="SELECT * FROM students LIMIT 5;" style="width: 100%; box-sizing: border-box; height: 90px; margin-bottom: 0.75rem;"></textarea>
-                            <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
-                                <button id="btnExecuteSql" class="btn btn-secondary btn-sm">Execute Query</button>
-                            </div>
-                            <div id="sqlResultsArea" style="margin-top: 1rem; max-height: 200px; overflow-y: auto; font-family: 'Fira Code', monospace; font-size: 0.8rem;"></div>
-                        </div>
                     </div>
                 </section>
 
@@ -933,6 +921,6 @@
         <span id="adminToastMsg">Success</span>
     </div>
 
-    <script type="module" src="/js/admin.js?v=3.0"></script>
+    <script type="module" src="/js/admin.js?v=3.1"></script>
 </body>
 </html>

@@ -98,6 +98,56 @@ def verify_sqlite_integrity(file_path: str) -> bool:
         return False
 
 
+def is_candidate_db_newer(candidate_path: str, local_path: str) -> bool:
+    """
+    Safely compares candidate downloaded database against local database before replacing.
+    Prevents overwriting newer local progress (e.g. after an ungraceful restart or crash).
+    Returns True if candidate has higher submission max ID/count, or local doesn't exist.
+    Returns False if local database already has equal or more recent submissions.
+    """
+    if not os.path.exists(local_path):
+        return True
+    try:
+        with sqlite3.connect(local_path) as loc_conn:
+            loc_cur = loc_conn.cursor()
+            loc_cur.execute("SELECT COALESCE(MAX(id), 0), COUNT(*) FROM submissions")
+            loc_sub_max_id, loc_sub_count = loc_cur.fetchone()
+            loc_cur.execute("SELECT COALESCE(MAX(id), 0) FROM events")
+            loc_evt_max_id = loc_cur.fetchone()[0]
+
+        with sqlite3.connect(candidate_path) as cand_conn:
+            cand_cur = cand_conn.cursor()
+            cand_cur.execute("SELECT COALESCE(MAX(id), 0), COUNT(*) FROM submissions")
+            cand_sub_max_id, cand_sub_count = cand_cur.fetchone()
+            cand_cur.execute("SELECT COALESCE(MAX(id), 0) FROM events")
+            cand_evt_max_id = cand_cur.fetchone()[0]
+
+        if cand_sub_max_id > loc_sub_max_id or cand_sub_count > loc_sub_count:
+            logger.info(
+                f"[BACKUP SYNC] Candidate database is newer (Remote subs: {cand_sub_count} [max id {cand_sub_max_id}] "
+                f"vs Local subs: {loc_sub_count} [max id {loc_sub_max_id}])."
+            )
+            return True
+        elif cand_sub_max_id == loc_sub_max_id and cand_sub_count == loc_sub_count:
+            if cand_evt_max_id > loc_evt_max_id:
+                return True
+            logger.info(
+                f"[BACKUP SYNC] Local database is already up to date with candidate "
+                f"(Local subs: {loc_sub_count}, Events: {loc_evt_max_id}). Skipping overwrite."
+            )
+            return False
+        else:
+            logger.warning(
+                f"[BACKUP SYNC] Local database has MORE RECENT submissions than candidate "
+                f"(Local: {loc_sub_count} subs [max id {loc_sub_max_id}] vs Remote: {cand_sub_count} subs [max id {cand_sub_max_id}]). "
+                f"Preserving local data to prevent progress loss!"
+            )
+            return False
+    except Exception as e:
+        logger.error(f"[BACKUP SYNC] Error comparing database recency: {e}. Preserving local database.")
+        return False
+
+
 def get_github_file_info(file_path: str = "pymentor_latest.db") -> Optional[Dict[str, Any]]:
     """Fetches commit metadata and file SHA from GitHub repository."""
     if not is_github_configured():
@@ -143,12 +193,18 @@ def sync_from_peer_host() -> bool:
                     shutil.copyfileobj(res, f)
 
                 if verify_sqlite_integrity(temp_path):
-                    # Check if downloaded is newer
-                    if os.path.exists(DB_PATH):
-                        shutil.copy2(DB_PATH, DB_PATH + ".bak")
-                    shutil.move(temp_path, DB_PATH)
-                    logger.info("[PEER SYNC] SUCCESS! Restored live database from primary host server.")
-                    return True
+                    # Check if downloaded database is genuinely newer than local copy
+                    if is_candidate_db_newer(temp_path, DB_PATH):
+                        if os.path.exists(DB_PATH):
+                            shutil.copy2(DB_PATH, DB_PATH + ".bak")
+                        shutil.move(temp_path, DB_PATH)
+                        logger.info("[PEER SYNC] SUCCESS! Restored live database from primary host server.")
+                        return True
+                    else:
+                        logger.info("[PEER SYNC] Local database is already current or newer. Keeping local copy.")
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)
+                        return True
                 else:
                     if os.path.exists(temp_path):
                         os.remove(temp_path)
@@ -201,10 +257,15 @@ def sync_from_github_on_startup():
                 shutil.copyfileobj(res, f)
 
         if verify_sqlite_integrity(temp_path):
-            if local_exists:
-                shutil.copy2(DB_PATH, DB_PATH + ".bak")
-            shutil.move(temp_path, DB_PATH)
-            logger.info(f"[GITHUB SYNC] SUCCESS! Database restored from GitHub ({remote_size:,} bytes).")
+            if is_candidate_db_newer(temp_path, DB_PATH):
+                if local_exists:
+                    shutil.copy2(DB_PATH, DB_PATH + ".bak")
+                shutil.move(temp_path, DB_PATH)
+                logger.info(f"[GITHUB SYNC] SUCCESS! Database restored from GitHub ({remote_size:,} bytes).")
+            else:
+                logger.info("[GITHUB SYNC] Local database is already current or newer than GitHub backup. Keeping local copy.")
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
         else:
             logger.error("[GITHUB SYNC] Downloaded database failed integrity check. Keeping local copy.")
             if os.path.exists(temp_path):

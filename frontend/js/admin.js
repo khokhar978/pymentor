@@ -1159,44 +1159,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Raw SQL Console
-    document.getElementById('btnExecuteSql').addEventListener('click', async () => {
-        const query = document.getElementById('rawSqlQueryInput').value.trim();
-        const resultsArea = document.getElementById('sqlResultsArea');
-        if (!query) return;
-
-        resultsArea.innerHTML = '<span style="color: var(--admin-text-muted);">Executing query...</span>';
-
-        try {
-            const res = await fetch('/api/admin/sql', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': state.secret },
-                body: JSON.stringify({ query })
-            });
-            const data = await res.json();
-            if (res.ok) {
-                if (data.type === 'query') {
-                    if (!data.rows || data.rows.length === 0) {
-                        resultsArea.innerHTML = `<span style="color: var(--admin-emerald);">Query returned 0 rows.</span>`;
-                    } else {
-                        const cols = Object.keys(data.rows[0]);
-                        let tableHtml = `<table class="data-table"><thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead><tbody>`;
-                        data.rows.forEach(r => {
-                            tableHtml += `<tr>${cols.map(c => `<td>${escapeHtml(String(r[c]))}</td>`).join('')}</tr>`;
-                        });
-                        tableHtml += `</tbody></table>`;
-                        resultsArea.innerHTML = tableHtml;
-                    }
-                } else {
-                    resultsArea.innerHTML = `<span style="color: var(--admin-emerald);">Success: ${data.rows_affected} rows affected.</span>`;
-                }
-            } else {
-                resultsArea.innerHTML = `<span style="color: var(--admin-rose);">${escapeHtml(data.detail || 'SQL Error')}</span>`;
-            }
-        } catch (err) {
-            resultsArea.innerHTML = `<span style="color: var(--admin-rose);">Network error executing SQL.</span>`;
-        }
-    });
 
     // ──────────────────────────────────────────────
     // API KEY MODAL

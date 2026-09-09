@@ -220,7 +220,17 @@ def session_heartbeat(req: HeartbeatRequest, student_id: int = Depends(require_p
 
 @router.post("/session/submit")
 def submit_code(req: SubmitCodeRequest, student_id: int = Depends(require_password_changed)):
-    # Check Student's Daily Guidance Quota
+    # 1. Per-request submit cooldown check (prevents rapid-fire / scripted spam)
+    last_submit = state.submit_cooldowns.get(student_id, 0)
+    elapsed = time.time() - last_submit
+    if elapsed < SUBMIT_COOLDOWN_SECONDS:
+        remaining = round(SUBMIT_COOLDOWN_SECONDS - elapsed, 1)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Please wait {remaining}s before requesting guidance again."
+        )
+
+    # 2. Daily Guidance Quota Check
     quota = get_student_daily_quota(student_id)
     if not quota["is_exempt"] and quota["is_enabled"] and quota["limit"] > 0:
         if quota["used"] >= quota["limit"]:

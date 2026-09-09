@@ -58,10 +58,6 @@ class TeacherInstructionsRequest(BaseModel):
     instructions: str = Field("", max_length=2000)
 
 
-class SqlQueryRequest(BaseModel):
-    query: str = Field(..., max_length=5000)
-    params: Optional[list] = None
-
 
 # ─────────────────────────────────────────────
 # ADMIN GROUP 1: PROBLEM MANAGEMENT MODELS
