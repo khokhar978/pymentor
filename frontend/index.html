@@ -126,6 +126,11 @@
                     <span id="guidanceText">Submit / Guidance</span>
                     <div class="spinner hidden" id="guidanceSpinner"></div>
                 </button>
+                <button id="viewReportBtn" class="btn-view-report hidden" title="View your learning report for this problem">
+                    <span>📘</span>
+                    <span id="viewReportText">View Report</span>
+                    <div class="spinner hidden" id="reportBtnSpinner"></div>
+                </button>
             </div>
 
             <!-- Horizontal Resizer Gutter between Editor and Output/Guidance Console -->
@@ -167,6 +172,33 @@
     </div>
 
 
+
+    <!-- Learning Report Modal -->
+    <div id="reportModalOverlay" class="report-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="reportModalTitle">
+        <div class="report-modal">
+            <div class="report-modal-header">
+                <div class="report-modal-title-row">
+                    <span class="report-modal-icon">📘</span>
+                    <h2 id="reportModalTitle" class="report-modal-title">Learning Report</h2>
+                </div>
+                <button id="reportModalClose" class="report-modal-close" aria-label="Close report">&times;</button>
+            </div>
+            <div id="reportModalBody" class="report-modal-body">
+                <div class="report-loading">
+                    <div class="spinner-dark"></div>
+                    <span id="reportLoadingText">Generating your personalised report...</span>
+                </div>
+            </div>
+            <div class="report-modal-footer">
+                <button id="reportCopyBtn" class="btn-report-action hidden">
+                    <span>📋</span> Copy Report
+                </button>
+                <button id="reportSaveBtn" class="btn-report-action hidden">
+                    <span>💾</span> Save as .txt
+                </button>
+            </div>
+        </div>
+    </div>
 
     <script type="module" src="/js/app.js?v=3.9"></script>
 </body>

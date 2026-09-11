@@ -52,7 +52,7 @@ def login_student(req: LoginRequest, request: Request):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT id, name, section, roll_no, email, password, needs_password_change, default_help_level FROM students WHERE roll_no = ? AND section = ?",
+        "SELECT id, name, section, roll_no, email, password, needs_password_change, default_help_level, is_active FROM students WHERE roll_no = ? AND section = ?",
         (roll_no, section)
     )
     student = cursor.fetchone()
@@ -65,6 +65,11 @@ def login_student(req: LoginRequest, request: Request):
         state.login_attempts[rate_key] = (fails, lock)
         logger.warning(f"[STUDENT AUTH] Login FAILED: Sec '{section}', Roll '{roll_no}' from IP={client_ip} (Attempt {fails}/5)")
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    if student["is_active"] == 0:
+        conn.close()
+        logger.warning(f"[STUDENT AUTH] Login REJECTED (Deactivated): Sec '{section}', Roll '{roll_no}'")
+        raise HTTPException(status_code=403, detail="Your account has been deactivated due to inactivity. Please contact your instructor.")
 
     # Success, reset failures
     if rate_key in state.login_attempts:

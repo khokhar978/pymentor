@@ -41,6 +41,7 @@ def cleanup_test_student(roll_no='9999'):
         sid = row["id"]
         cursor.execute("DELETE FROM events WHERE student_id = ?", (sid,))
         cursor.execute("DELETE FROM auth_tokens WHERE student_id = ?", (sid,))
+        cursor.execute("DELETE FROM learning_reports WHERE student_id = ?", (sid,))
         cursor.execute("DELETE FROM submissions WHERE session_id IN (SELECT id FROM sessions WHERE student_id = ?)", (sid,))
         cursor.execute("DELETE FROM sessions WHERE student_id = ?", (sid,))
         cursor.execute("DELETE FROM students WHERE id = ?", (sid,))
@@ -634,6 +635,179 @@ def test_admin_lockout_and_rate_limiting():
 
 
 # ─────────────────────────────────────────────────────────────
+# 12. LEARNING REPORT & QUOTA MANAGER INTEGRATION
+# ─────────────────────────────────────────────────────────────
+def test_learning_reports_and_quota_manager():
+    """
+    Verify the Learning Report system and Quota Manager integration:
+    - MODEL_CONFIGS 'uses' classification ('guidance' vs 'both')
+    - get_available_report_models() returns only premium models ('both'), never gemma/lite
+    - Dynamic fallback when primary report model is rate limited
+    - Database CRUD helpers for learning_reports table
+    - AI mentor prompt generator for learning reports
+    - Session submit gating: attempt 1 does not trigger report; attempt 2+ triggers report
+    - GET /api/report/{problem_id} endpoint authentication, state machine (pending/ready/failed) and IDOR isolation
+    """
+    from backend.quota_manager import (
+        MODEL_CONFIGS, MODEL_MAP, get_available_models, get_available_report_models,
+        record_model_rate_limited
+    )
+    from backend.database import (
+        create_or_reset_learning_report, save_learning_report,
+        mark_learning_report_failed, get_learning_report
+    )
+    from backend.ai_mentor import build_learning_report_prompt
+
+    # 1. Model classification & Quota Manager rules
+    for m in MODEL_CONFIGS:
+        assert "uses" in m, f"Model {m['model']} missing 'uses' field"
+        assert m["uses"] in ("guidance", "both"), f"Model {m['model']} invalid uses: {m['uses']}"
+
+    guidance_models = get_available_models()
+    assert len(guidance_models) > 0, "Expected at least one guidance model"
+
+    report_models = get_available_report_models()
+    assert len(report_models) > 0, "Expected at least one report model"
+    for m in report_models:
+        assert MODEL_MAP[m].get("uses") == "both", f"Report model {m} must have uses='both'"
+        assert "gemma" not in m.lower(), f"Gemma model {m} must not be in report pool"
+        assert "lite" not in m.lower(), f"Lite model {m} must not be in report pool"
+
+    # Verify primary report model is gemini-3.8-flash
+    assert report_models[0] == "gemini-3.8-flash"
+    print("  [OK] Quota manager strictly confines report models to premium 'both' tier (never Gemma/Lite)")
+
+    # 2. Database CRUD helpers
+    sid = setup_test_student(needs_change=0)
+    try:
+        # Initial creation
+        create_or_reset_learning_report(sid, 1, 100)
+        rep = get_learning_report(sid, 1)
+        assert rep is not None
+        assert rep["status"] == "pending"
+        assert rep["report_text"] is None or rep["report_text"] == ""
+
+        # Saving report
+        test_md = "## \u2705 What You Got Right\nGreat variable usage!"
+        save_learning_report(sid, 1, test_md)
+        rep = get_learning_report(sid, 1)
+        assert rep["status"] == "ready"
+        assert rep["report_text"] == test_md
+
+        # Marking failure
+        mark_learning_report_failed(sid, 1)
+        rep = get_learning_report(sid, 1)
+        assert rep["status"] == "failed"
+
+        # Resetting report for re-attempt
+        create_or_reset_learning_report(sid, 1, 101)
+        rep = get_learning_report(sid, 1)
+        assert rep["status"] == "pending"
+        assert not rep["report_text"]
+        print("  [OK] Database helpers manage learning_reports lifecycle (create/save/fail/reset)")
+
+        # 3. AI mentor prompt builder
+        prompt = build_learning_report_prompt(
+            problem={"title": "Test Problem", "description": "Do something", "starter_code": ""},
+            submissions=[
+                {"code": "x = 1", "simulated_output": "1", "ai_response": "Add y"},
+                {"code": "x = 1\ny = 2\nprint(x+y)", "simulated_output": "3", "ai_response": "Correct!"}
+            ]
+        )
+        assert "Test Problem" in prompt
+        assert "Attempt #1" in prompt
+        assert "Attempt #2" in prompt
+        assert "What You Got Right" in prompt
+        assert "Key Mistakes Made" in prompt
+        print("  [OK] Learning report pedagogical prompt generated with full multi-attempt history")
+
+        # 4. API endpoint: Auth, state machine & IDOR protection
+        sid_b = create_test_student('9992', 'Student B', needs_change=0)
+        res_a = client.post("/api/student/login", json={"section": "TEST", "roll_no": "9999", "password": "smoke_pass_123"})
+        assert res_a.status_code == 200, f"Login failed for Student A: {res_a.text}"
+        token_a = res_a.json()["token"]
+        res_b = client.post("/api/student/login", json={"section": "TEST", "roll_no": "9992", "password": "smoke_pass_123"})
+        assert res_b.status_code == 200, f"Login failed for Student B: {res_b.text}"
+        token_b = res_b.json()["token"]
+
+        # Unauthenticated request blocked
+        unauth_res = client.get("/api/report/1")
+        assert unauth_res.status_code in (401, 307, 302)
+
+        # Save report for Student A on Problem 1
+        save_learning_report(sid, 1, "Report exclusively for Student A")
+
+        # Student A fetches ready report
+        rep_a_res = client.get("/api/report/1", headers={"Authorization": f"Bearer {token_a}"})
+        assert rep_a_res.status_code == 200
+        assert rep_a_res.json()["status"] == "ready"
+        assert rep_a_res.json()["report"] == "Report exclusively for Student A"
+
+        # Student B cannot see Student A's report (IDOR isolation: Student B has not solved Problem 1)
+        rep_b_res = client.get("/api/report/1", headers={"Authorization": f"Bearer {token_b}"})
+        assert rep_b_res.status_code == 400
+        assert "only available after solving" in rep_b_res.json()["detail"]
+        print("  [OK] /api/report/{problem_id} enforces authentication and strict student-level IDOR isolation")
+
+        # 5. Session submit gating: attempt 1 solve vs attempt 2 solve
+        s_res1 = client.post("/api/session/start", json={"problem_id": 1, "help_level": 1}, headers={"Authorization": f"Bearer {token_a}"})
+        sess_id1 = s_res1.json()["session_id"]
+
+        with patch("backend.routers.session.evaluate_code") as mock_eval:
+            # First-attempt solve -> has_report MUST be False
+            mock_eval.return_value = {"is_correct": True, "feedback": "First-try solve!", "model_used": "mock"}
+            sub1 = client.post("/api/session/submit", json={
+                "session_id": sess_id1,
+                "code": "print('first try')",
+                "help_level": 1,
+                "simulated_output": "first try"
+            }, headers={"Authorization": f"Bearer {token_a}"})
+            assert sub1.status_code == 200, f"Submit failed: {sub1.text}"
+            assert sub1.json()["is_correct"] is True
+            assert sub1.json()["has_report"] is False, "1st attempt solve should NOT trigger report"
+
+        state.submit_cooldowns.pop(sid, None)
+
+        # Problem 2: Multi-attempt solve
+        s_res2 = client.post("/api/session/start", json={"problem_id": 2, "help_level": 1}, headers={"Authorization": f"Bearer {token_a}"})
+        sess_id2 = s_res2.json()["session_id"]
+
+        with patch("backend.routers.session.evaluate_code") as mock_eval:
+            # Attempt 1 (In Progress)
+            mock_eval.return_value = {"is_correct": False, "feedback": "Keep going", "model_used": "mock"}
+            sub_att1 = client.post("/api/session/submit", json={
+                "session_id": sess_id2,
+                "code": "print('attempt 1')",
+                "help_level": 1,
+                "simulated_output": "attempt 1"
+            }, headers={"Authorization": f"Bearer {token_a}"})
+            assert sub_att1.status_code == 200, f"Submit attempt 1 failed: {sub_att1.text}"
+            assert sub_att1.json()["is_correct"] is False
+            assert sub_att1.json()["has_report"] is False
+
+            state.submit_cooldowns.pop(sid, None)
+
+            # Attempt 2 (Solved) -> has_report MUST be True
+            mock_eval.return_value = {"is_correct": True, "feedback": "Solved on attempt 2!", "model_used": "mock"}
+            with patch("backend.routers.session.generate_learning_report", return_value="Mocked Report"):
+                sub_att2 = client.post("/api/session/submit", json={
+                    "session_id": sess_id2,
+                    "code": "print('attempt 2')",
+                    "help_level": 1,
+                    "simulated_output": "attempt 2"
+                }, headers={"Authorization": f"Bearer {token_a}"})
+                assert sub_att2.status_code == 200, f"Submit attempt 2 failed: {sub_att2.text}"
+                assert sub_att2.json()["is_correct"] is True
+                assert sub_att2.json()["attempt_number"] == 2
+                assert sub_att2.json()["has_report"] is True, "Attempt 2 solve MUST set has_report=True"
+        print("  [OK] Session submit report gate verified (attempt 1=False, attempt 2+=True)")
+
+    finally:
+        cleanup_test_student('9999')
+        cleanup_test_student('9992')
+
+
+# ─────────────────────────────────────────────────────────────
 # MAIN TEST RUNNER
 # ─────────────────────────────────────────────────────────────
 def run_all_smoke_tests():
@@ -642,42 +816,45 @@ def run_all_smoke_tests():
     print("=" * 65)
     start_time = time.time()
 
-    print("\n[Suite 1/11: Static Routing & Modules]")
+    print("\n[Suite 1/12: Static Routing & Modules]")
     test_pages_and_static_routes()
 
-    print("\n[Suite 2/11: Security & Browser Isolation]")
+    print("\n[Suite 2/12: Security & Browser Isolation]")
     test_coop_coep_and_security_headers()
 
-    print("\n[Suite 3/11: Student Authentication & Failures]")
+    print("\n[Suite 3/12: Student Authentication & Failures]")
     test_login_failure_no_500()
 
-    print("\n[Suite 4/11: Password Change & Security Gating]")
+    print("\n[Suite 4/12: Password Change & Security Gating]")
     test_password_change_and_security_gating()
 
-    print("\n[Suite 5/11: Curriculum & Problem Content]")
+    print("\n[Suite 5/12: Curriculum & Problem Content]")
     test_curriculum_and_content_endpoints()
 
-    print("\n[Suite 6/11: Practice Session Lifecycle]")
+    print("\n[Suite 6/12: Practice Session Lifecycle]")
     test_student_full_journey()
 
-    print("\n[Suite 7/11: Progress & Profile Analytics]")
+    print("\n[Suite 7/12: Progress & Profile Analytics]")
     test_progress_and_profile_endpoints()
 
-    print("\n[Suite 8/11: Admin Operations & Telemetry Inspection]")
+    print("\n[Suite 8/12: Admin Operations & Telemetry Inspection]")
     test_admin_dashboard_and_telemetry_inspection()
 
-    print("\n[Suite 9/11: AI Code Submission & Cooldown]")
+    print("\n[Suite 9/12: AI Code Submission & Cooldown]")
     test_code_submit_and_cooldown()
 
-    print("\n[Suite 10/11: Cross-Student Session IDOR Protection]")
+    print("\n[Suite 10/12: Cross-Student Session IDOR Protection]")
     test_cross_student_idor()
 
-    print("\n[Suite 11/11: Admin Brute-Force Lockout]")
+    print("\n[Suite 11/12: Admin Brute-Force Lockout]")
     test_admin_lockout_and_rate_limiting()
+
+    print("\n[Suite 12/12: Learning Report & Quota Manager Integration]")
+    test_learning_reports_and_quota_manager()
 
     duration = round(time.time() - start_time, 2)
     print("\n" + "=" * 65)
-    print(f"  ALL 11 SMOKE TEST SUITES PASSED SUCCESSFULLY in {duration}s! ")
+    print(f"  ALL 12 SMOKE TEST SUITES PASSED SUCCESSFULLY in {duration}s! ")
     print("=" * 65)
 
 if __name__ == "__main__":

@@ -60,6 +60,18 @@ const el = {
     guidanceBody:        document.getElementById('guidanceBody'),
     guidanceStatus:      document.getElementById('guidanceStatus'),
     dailyQuotaBadge:     document.getElementById('dailyQuotaBadge'),
+
+    // Learning Report
+    viewReportBtn:       document.getElementById('viewReportBtn'),
+    viewReportText:      document.getElementById('viewReportText'),
+    reportBtnSpinner:    document.getElementById('reportBtnSpinner'),
+    reportModalOverlay:  document.getElementById('reportModalOverlay'),
+    reportModalBody:     document.getElementById('reportModalBody'),
+    reportModalTitle:    document.getElementById('reportModalTitle'),
+    reportModalClose:    document.getElementById('reportModalClose'),
+    reportCopyBtn:       document.getElementById('reportCopyBtn'),
+    reportSaveBtn:       document.getElementById('reportSaveBtn'),
+    reportLoadingText:   document.getElementById('reportLoadingText'),
 };
 
 // ──────────────────────────────────────────────
@@ -75,6 +87,28 @@ let activeInputEl = null;
 let pendingRunCode = null;
 const textEncoder = new TextEncoder();
 let suggestionsEnabled = localStorage.getItem('pymentor_suggestions_enabled') === 'true';
+
+// ──────────────────────────────────────────────
+// REPORT STATE
+// ──────────────────────────────────────────────
+// Tracks the current UI state of the report button/modal.
+// 'idle'     — not yet solved or first-try solve (button hidden)
+// 'ready'    — report confirmed ready in DB (button shown, can open immediately)
+// 'pending'  — background thread still generating (button shown, modal shows spinner + polls)
+// 'fetching' — a fetch is in-flight (prevents concurrent requests)
+let reportState = 'idle';
+let reportPollTimer = null;       // holds setTimeout handle when polling
+let _cachedReportText = null;     // in-memory cache so we don't re-fetch on re-open
+
+function showViewReportButton() {
+    if (!el.viewReportBtn) return;
+    el.viewReportBtn.classList.remove('hidden');
+}
+
+function hideViewReportButton() {
+    if (!el.viewReportBtn) return;
+    el.viewReportBtn.classList.add('hidden');
+}
 
 // ──────────────────────────────────────────────
 // INIT
@@ -509,6 +543,32 @@ function setupListeners() {
     el.runBtn.addEventListener('click', runCode);
     el.guidanceBtn.addEventListener('click', getGuidance);
 
+    // Learning Report button
+    if (el.viewReportBtn) {
+        el.viewReportBtn.addEventListener('click', openReportModal);
+    }
+    if (el.reportModalClose) {
+        el.reportModalClose.addEventListener('click', closeReportModal);
+    }
+    // Close modal on overlay backdrop click
+    if (el.reportModalOverlay) {
+        el.reportModalOverlay.addEventListener('click', (e) => {
+            if (e.target === el.reportModalOverlay) closeReportModal();
+        });
+    }
+    // Escape key closes report modal
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && el.reportModalOverlay && !el.reportModalOverlay.classList.contains('hidden')) {
+            closeReportModal();
+        }
+    });
+    if (el.reportCopyBtn) {
+        el.reportCopyBtn.addEventListener('click', copyReportToClipboard);
+    }
+    if (el.reportSaveBtn) {
+        el.reportSaveBtn.addEventListener('click', saveReportAsTxt);
+    }
+
     // Clicking anywhere in the terminal re-focuses active inline input
     el.outputBody.addEventListener('click', (e) => {
         if (activeInputEl && e.target !== activeInputEl) {
@@ -850,11 +910,14 @@ function renderProblem(p) {
         setEditorCode('# Write your Python code here\n\n');
     }
 
-    // Reset problem status indicators
+    // Reset problem status indicators & learning report button
     if (el.guidanceStatus) {
         el.guidanceStatus.className = 'status-pending';
         el.guidanceStatus.textContent = 'Pending';
     }
+    hideViewReportButton();
+    reportState = 'idle';
+    _cachedReportText = null;
 
     document.title = p.title + ' | Python Practice';
 }
@@ -894,6 +957,19 @@ async function startSession() {
 
         if (session.is_solved) {
             el.guidanceStatus.innerHTML = '<span class="status-solved">Solved &#10003;</span>';
+            // If already solved with >=2 attempts, check if report exists and display button
+            if (session.attempts_count >= 2) {
+                apiFetch(`/api/report/${state.problemId}`)
+                    .then(r => r.ok ? r.json() : null)
+                    .then(data => {
+                        if (data && (data.status === 'ready' || data.status === 'pending')) {
+                            reportState = data.status;
+                            if (data.report) _cachedReportText = data.report;
+                            showViewReportButton();
+                        }
+                    })
+                    .catch(() => {});
+            }
         } else {
             el.guidanceStatus.className = 'status-pending';
             el.guidanceStatus.textContent = 'Pending';
@@ -1026,6 +1102,13 @@ async function getGuidance() {
             updateTimerDisplay();
             el.guidanceStatus.innerHTML = '<span class="status-solved">Solved &#10003;</span>';
             triggerConfetti();
+
+            // Show View Report button if backend confirms report is being generated
+            if (result.has_report) {
+                reportState = 'pending'; // background thread started
+                _cachedReportText = null;
+                showViewReportButton();
+            }
         } else {
             el.guidanceStatus.innerHTML = '<span class="status-progress">In Progress</span>';
         }
@@ -1189,4 +1272,186 @@ function updateTimerDisplay() {
         el.timeCounter.className = 'time-pill';
         el.timeCounter.title = isTimerStarted ? `Active practice time: ${timeStr}` : `Practice time (starts on activity): ${timeStr}`;
     }
+}
+
+// ──────────────────────────────────────────────
+// LEARNING REPORT — MODAL STATE MACHINE
+// ──────────────────────────────────────────────
+
+/**
+ * Open the report modal.
+ * - If we already have the text cached → show it immediately.
+ * - If reportState === 'ready' but no cache → fetch once.
+ * - If reportState === 'pending' → open with spinner, start polling.
+ * - If reportState === 'fetching' → just open with spinner (fetch already running).
+ */
+function openReportModal() {
+    if (!el.reportModalOverlay) return;
+    el.reportModalOverlay.classList.remove('hidden');
+
+    // Instant display if already cached
+    if (_cachedReportText) {
+        renderReportReady(_cachedReportText);
+        return;
+    }
+
+    // Show spinner while we work
+    showReportLoading('Generating your personalised report…');
+
+    if (reportState === 'pending') {
+        // Background thread still running — start polling, don't fire a new fetch yet
+        scheduleReportPoll();
+    } else if (reportState === 'ready' || reportState === 'fetching') {
+        // 'ready' means DB should have it; 'fetching' means a call is already in flight
+        fetchAndShowReport();
+    } else {
+        // Shouldn't normally reach here while the modal is shown, but handle gracefully
+        renderReportError('Report is not available yet. Please try again shortly.');
+    }
+}
+
+function closeReportModal() {
+    if (!el.reportModalOverlay) return;
+    el.reportModalOverlay.classList.add('hidden');
+    // Cancel any active poll — it will restart cleanly on next open
+    if (reportPollTimer) {
+        clearTimeout(reportPollTimer);
+        reportPollTimer = null;
+    }
+}
+
+/**
+ * Hit GET /api/report/{problem_id}.
+ * Handles all three server responses: pending / ready / error.
+ * Guards against concurrent calls using reportState === 'fetching'.
+ */
+async function fetchAndShowReport() {
+    if (reportState === 'fetching') return;  // Already in-flight
+    if (!state.problemId) {
+        renderReportError('No problem loaded — cannot fetch report.');
+        return;
+    }
+
+    reportState = 'fetching';
+
+    try {
+        const res = await apiFetch(`/api/report/${state.problemId}`);
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || `Server error (${res.status})`);
+        }
+
+        const data = await res.json();
+
+        if (data.status === 'ready' && data.report) {
+            _cachedReportText = data.report;
+            reportState = 'ready';
+            // If modal is open, render immediately; else just update state
+            if (el.reportModalOverlay && !el.reportModalOverlay.classList.contains('hidden')) {
+                renderReportReady(data.report);
+            }
+        } else if (data.status === 'pending') {
+            // Background thread still running — go back to pending and keep polling
+            reportState = 'pending';
+            if (el.reportModalOverlay && !el.reportModalOverlay.classList.contains('hidden')) {
+                showReportLoading('Still generating… hang tight!');
+                scheduleReportPoll();
+            }
+        } else {
+            // 'error' or unexpected status
+            reportState = 'pending'; // allow retry on next button click
+            if (el.reportModalOverlay && !el.reportModalOverlay.classList.contains('hidden')) {
+                renderReportError(data.detail || 'Report generation failed. Please close and try again.');
+            }
+        }
+    } catch (err) {
+        reportState = 'pending'; // allow retry
+        if (el.reportModalOverlay && !el.reportModalOverlay.classList.contains('hidden')) {
+            renderReportError('Could not reach server: ' + err.message);
+        }
+    }
+}
+
+/**
+ * Schedule a single poll in 3 seconds.
+ * Self-cancels once a definitive state (ready or error) is reached.
+ * Never fires while a fetch is already in-flight.
+ */
+function scheduleReportPoll() {
+    if (reportPollTimer) return; // Already scheduled
+    if (reportState === 'ready') return; // Already done
+
+    reportPollTimer = setTimeout(() => {
+        reportPollTimer = null;
+        // Only poll if modal is still visible and not already fetching
+        if (el.reportModalOverlay && !el.reportModalOverlay.classList.contains('hidden')) {
+            fetchAndShowReport();
+        }
+        // If modal was closed while waiting, the timer was cancelled in closeReportModal — won't reach here
+    }, 3000);
+}
+
+/** Render the report markdown inside the modal and show action buttons. */
+function renderReportReady(reportText) {
+    if (!el.reportModalBody) return;
+
+    const parsed = typeof marked !== 'undefined' ? marked.parse(reportText) : reportText.replace(/\n/g, '<br>');
+    const safe = typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(parsed) : parsed;
+    el.reportModalBody.innerHTML = safe;
+    el.reportModalBody.scrollTop = 0;
+
+    // Show Copy / Save buttons
+    if (el.reportCopyBtn) el.reportCopyBtn.classList.remove('hidden');
+    if (el.reportSaveBtn) el.reportSaveBtn.classList.remove('hidden');
+}
+
+/** Show an error state inside the modal body. */
+function renderReportError(message) {
+    if (!el.reportModalBody) return;
+    el.reportModalBody.innerHTML = `<div class="report-error">⚠️ ${message}</div>`;
+    if (el.reportCopyBtn) el.reportCopyBtn.classList.add('hidden');
+    if (el.reportSaveBtn) el.reportSaveBtn.classList.add('hidden');
+}
+
+/** Show loading spinner with custom message inside the modal. */
+function showReportLoading(message) {
+    if (!el.reportModalBody) return;
+    el.reportModalBody.innerHTML = `
+        <div class="report-loading">
+            <div class="spinner-dark"></div>
+            <span>${message || 'Generating your personalised report…'}</span>
+        </div>`;
+    if (el.reportCopyBtn) el.reportCopyBtn.classList.add('hidden');
+    if (el.reportSaveBtn) el.reportSaveBtn.classList.add('hidden');
+}
+
+/** Copy the cached report text to clipboard. */
+async function copyReportToClipboard() {
+    if (!_cachedReportText) return;
+    try {
+        await navigator.clipboard.writeText(_cachedReportText);
+        if (el.reportCopyBtn) {
+            const originalHTML = el.reportCopyBtn.innerHTML;
+            el.reportCopyBtn.innerHTML = '<span>✅</span> Copied!';
+            setTimeout(() => { el.reportCopyBtn.innerHTML = originalHTML; }, 2000);
+        }
+    } catch {
+        alert('Could not copy to clipboard. Please select and copy the text manually.');
+    }
+}
+
+/** Trigger a browser download of the report as a plain-text .txt file. */
+function saveReportAsTxt() {
+    if (!_cachedReportText) return;
+    const problemTitle = (el.problemTitle ? el.problemTitle.textContent : 'problem').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    const filename = `learning_report_${problemTitle}.txt`;
+    const blob = new Blob([_cachedReportText], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 }

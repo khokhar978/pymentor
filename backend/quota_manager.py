@@ -35,69 +35,80 @@ _lock = threading.Lock()
 # Gemma models are strictly LAST RESORT (Emergency only)
 # ─────────────────────────────────────────────────────────────
 MODEL_CONFIGS: List[Dict[str, Any]] = [
+    # ── GUIDANCE-ONLY: high-volume, lower-quality lite models ──
     {
         "model": "gemini-3.5-flash-lite",
         "rpd": 500,
         "rpm": 15,
         "tier": "Gemini Flash Lite (Primary)",
-        "priority": 1
+        "priority": 1,
+        "uses": "guidance",   # Not good enough for learning reports
     },
     {
         "model": "gemini-3.1-flash-lite",
         "rpd": 500,
         "rpm": 15,
         "tier": "Gemini Flash Lite (Secondary)",
-        "priority": 2
+        "priority": 2,
+        "uses": "guidance",   # Not good enough for learning reports
     },
+    # ── PREMIUM: used for both guidance fallback AND learning reports ──
     {
         "model": "gemini-3.8-flash",
         "rpd": 20,
         "rpm": 5,
         "tier": "Gemini 3.8 Flash (Premium)",
-        "priority": 3
+        "priority": 3,
+        "uses": "both",       # Report primary, guidance fallback
     },
     {
         "model": "gemini-3.7-flash",
         "rpd": 20,
         "rpm": 5,
         "tier": "Gemini 3.7 Flash (Premium)",
-        "priority": 4
+        "priority": 4,
+        "uses": "both",
     },
     {
         "model": "gemini-3.6-flash",
         "rpd": 20,
         "rpm": 5,
-        "tier": "Gemini 3.6 Flash (Premium)",
-        "priority": 5
+        "tier": "Gemini 3.6 Flash (Standard)",
+        "priority": 5,
+        "uses": "both",
     },
     {
         "model": "gemini-3.5-flash",
         "rpd": 20,
         "rpm": 5,
-        "tier": "Gemini 3.5 Flash (Premium)",
-        "priority": 6
+        "tier": "Gemini 3.5 Flash (Standard)",
+        "priority": 6,
+        "uses": "both",
     },
     {
         "model": "gemini-2.5-flash",
         "rpd": 20,
         "rpm": 5,
         "tier": "Gemini 2.5 Flash (Standard)",
-        "priority": 7
+        "priority": 7,
+        "uses": "both",
     },
-    # ── EMERGENCY SAFETY NET (Used only if all 1,100 Gemini calls are spent) ──
+    # ── EMERGENCY SAFETY NET (guidance only — never used for reports) ──
     {
         "model": "gemma-4-31b-it",
         "rpd": 14400,
         "rpm": 30,
         "tier": "Gemma 4 31B (Emergency Fallback 1)",
-        "priority": 8
+        "priority": 8,
+        "uses": "guidance",   # Never used for learning reports
     },
     {
         "model": "gemma-4-26b-a4b-it",
         "rpd": 14400,
         "rpm": 30,
         "tier": "Gemma 4 26B (Emergency Fallback 2)",
-        "priority": 9
+        "priority": 9,
+        "uses": "guidance",   # Never used for learning reports
     },
 ]
 
@@ -135,12 +146,12 @@ def init_quota_tables():
 init_quota_tables()
 
 
-def get_available_models() -> List[str]:
+def _get_available_for_use(use_filter: str) -> List[str]:
     """
-    Returns candidate models in strict priority order that have NOT
-    exhausted their daily quota or current minute rate.
-    Automatically resets counters if Pacific Time date has changed (new day)
-    or if timestamps are older than 60 seconds (PC sleep / wait).
+    Core quota logic shared by get_available_models() and get_available_report_models().
+    Returns models in priority order that pass the quota check AND match `use_filter`.
+    use_filter: 'guidance' → all models (guidance + both)
+                'report'   → only models with uses='both'
     """
     current_pt_date = get_pacific_date_str()
     now_ts = time.time()
@@ -150,7 +161,6 @@ def get_available_models() -> List[str]:
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Load current stored states
         cursor.execute("SELECT model_name, pt_date, day_count, minute_timestamps, is_daily_blocked FROM model_quotas")
         rows = {r["model_name"]: dict(r) for r in cursor.fetchall()}
 
@@ -158,25 +168,28 @@ def get_available_models() -> List[str]:
 
         for cfg in MODEL_CONFIGS:
             model = cfg["model"]
-            rpd = cfg["rpd"]
-            rpm = cfg["rpm"]
+            rpd   = cfg["rpd"]
+            rpm   = cfg["rpm"]
+            uses  = cfg.get("uses", "both")
+
+            # Filter: reports only want models marked 'both'
+            if use_filter == "report" and uses != "both":
+                continue
 
             row = rows.get(model)
             if not row:
-                # First time seeing this model, fully available
                 available.append(model)
                 continue
 
-            pt_date = row.get("pt_date")
-            day_count = row.get("day_count", 0)
+            pt_date          = row.get("pt_date")
+            day_count        = row.get("day_count", 0)
             is_daily_blocked = row.get("is_daily_blocked", 0)
 
-            # Check if a new day has started in Pacific Time
+            # New Pacific Time day → reset counters
             if pt_date != current_pt_date:
-                # Quota reset! Reset day_count and block flags in DB
                 cursor.execute("""
-                UPDATE model_quotas 
-                SET pt_date = ?, day_count = 0, minute_timestamps = '[]', is_daily_blocked = 0 
+                UPDATE model_quotas
+                SET pt_date = ?, day_count = 0, minute_timestamps = '[]', is_daily_blocked = 0
                 WHERE model_name = ?
                 """, (current_pt_date, model))
                 conn.commit()
@@ -185,31 +198,46 @@ def get_available_models() -> List[str]:
 
             # Daily quota check
             if is_daily_blocked or day_count >= rpd:
-                # Daily quota exhausted, skip without making any network call
                 continue
 
-            # Minute rate limit check
+            # Minute rate-limit check
             try:
-                raw_ts = json.loads(row.get("minute_timestamps") or "[]")
-                # Filter out timestamps older than 60 seconds (handles sleep / elapsed time)
+                raw_ts   = json.loads(row.get("minute_timestamps") or "[]")
                 valid_ts = [ts for ts in raw_ts if ts > cutoff_ts]
             except Exception:
                 valid_ts = []
 
             if len(valid_ts) >= rpm:
-                # Temporarily rate limited for this minute
                 continue
 
             available.append(model)
 
         conn.close()
-
-        # Fallback safety: If all models are rate limited, return the Gemma emergency models
-        if not available:
-            logger.warning("All primary models at quota! Falling back to Gemma emergency models.")
-            available = ["gemma-4-31b-it", "gemma-4-26b-a4b-it"]
-
         return available
+
+
+def get_available_models() -> List[str]:
+    """
+    Returns guidance-eligible models in priority order (all tiers including flash-lite and Gemma).
+    Falls back to Gemma emergency models if every Gemini model is exhausted.
+    """
+    available = _get_available_for_use("guidance")
+
+    if not available:
+        logger.warning("All primary models at quota! Falling back to Gemma emergency models.")
+        available = ["gemma-4-31b-it", "gemma-4-26b-a4b-it"]
+
+    return available
+
+
+def get_available_report_models() -> List[str]:
+    """
+    Returns premium-only models eligible for learning report generation,
+    in priority order (gemini-3.8-flash → 3.7 → 3.6 → 3.5 → 2.5).
+    Never includes flash-lite or Gemma — reports must be high quality.
+    Returns an empty list if all premium quota is exhausted (caller should raise an error).
+    """
+    return _get_available_for_use("report")
 
 
 def record_model_usage(model: str):

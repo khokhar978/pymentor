@@ -243,6 +243,21 @@ def init_db():
     except Exception:
         pass
 
+    # Table: learning_reports — one AI-generated debrief per (student, problem)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS learning_reports (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        student_id      INTEGER NOT NULL,
+        problem_id      INTEGER NOT NULL,
+        session_id      INTEGER NOT NULL,
+        status          TEXT NOT NULL DEFAULT 'pending',
+        report_text     TEXT,
+        generated_at    TEXT,
+        created_at      TEXT DEFAULT (datetime('now','localtime')),
+        UNIQUE(student_id, problem_id)
+    );
+    """)
+
     # Seed / sync problems
     seed_problems(cursor)
 
@@ -365,6 +380,62 @@ def get_student_daily_quota(student_id: int) -> dict:
         "is_exempt": is_exempt,
         "is_enabled": is_enabled
     }
+
+# ─────────────────────────────────────────────
+# LEARNING REPORT DB HELPERS
+# ─────────────────────────────────────────────
+
+def create_or_reset_learning_report(student_id: int, problem_id: int, session_id: int):
+    """Insert a new pending report row, or reset an existing one to pending for regeneration."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+    INSERT INTO learning_reports (student_id, problem_id, session_id, status, report_text, generated_at, created_at)
+    VALUES (?, ?, ?, 'pending', NULL, NULL, datetime('now','localtime'))
+    ON CONFLICT(student_id, problem_id) DO UPDATE SET
+        session_id    = excluded.session_id,
+        status        = 'pending',
+        report_text   = NULL,
+        generated_at  = NULL
+    """, (student_id, problem_id, session_id))
+    conn.commit()
+    conn.close()
+
+def save_learning_report(student_id: int, problem_id: int, report_text: str):
+    """Mark a report as ready and store its text."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+    UPDATE learning_reports
+    SET status = 'ready', report_text = ?, generated_at = datetime('now','localtime')
+    WHERE student_id = ? AND problem_id = ?
+    """, (report_text, student_id, problem_id))
+    conn.commit()
+    conn.close()
+
+def mark_learning_report_failed(student_id: int, problem_id: int):
+    """Mark report as failed so a sync retry is allowed on next user click."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+    UPDATE learning_reports SET status = 'failed' WHERE student_id = ? AND problem_id = ?
+    """, (student_id, problem_id))
+    conn.commit()
+    conn.close()
+
+def get_learning_report(student_id: int, problem_id: int):
+    """Return {status, report_text} dict or None if no row exists."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT status, report_text FROM learning_reports WHERE student_id = ? AND problem_id = ?
+    """, (student_id, problem_id))
+    row = cursor.fetchone()
+    conn.close()
+    if row is None:
+        return None
+    return dict(row)
+
 
 def seed_students(cursor):
     authorized = []

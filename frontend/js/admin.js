@@ -757,10 +757,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td>${statusBadge}</td>
                 <td style="color: var(--admin-text-muted); font-size: 0.8rem;">${lastActive}</td>
                 <td style="text-align: right; white-space: nowrap;">
-                    <button class="btn btn-secondary btn-xs" onclick="window.inspectStudent(${s.id})">Telemetry</button>
+                    <button class="btn btn-secondary btn-xs" onclick="window.inspectStudent(${s.id})">Inspect</button>
                     <button class="btn btn-secondary btn-xs" onclick="window.openStudentRateLimitModal(${s.id}, '${escapeHtml(s.name)}', '${escapeHtml(s.roll_no)}')" style="margin-left: 4px;" title="Individual Guidance Rate Limits">Limits</button>
                     <button class="btn btn-secondary btn-xs" onclick="window.openResetPasswordModal(${s.id}, '${escapeHtml(s.name)}', '${escapeHtml(s.roll_no)}', '${escapeHtml(s.section)}')" style="margin-left: 4px;">Reset Pw</button>
-                    <button class="btn btn-danger btn-xs" onclick="window.deleteStudent(${s.id}, '${escapeHtml(s.roll_no)}')" style="margin-left: 4px;">Deactivate</button>
+                    ${s.is_active 
+                        ? `<button class="btn btn-danger btn-xs" onclick="window.deleteStudent(${s.id}, '${escapeHtml(s.roll_no)}')" style="margin-left: 4px;">Deactivate</button>`
+                        : `<button class="btn btn-primary btn-xs" onclick="window.reactivateStudent(${s.id}, '${escapeHtml(s.roll_no)}')" style="margin-left: 4px; background: #059669; border-color: #059669;">Reactivate</button>`
+                    }
                 </td>
             `;
             tbody.appendChild(tr);
@@ -917,6 +920,142 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (err) {
             showToast("Network error deactivating student", "error");
+        }
+    };
+
+    window.reactivateStudent = async function(id, roll) {
+        if (!confirm(`Are you sure you want to reactivate student ${roll}? This will enable their account and reset their password to '123'.`)) return;
+
+        try {
+            // 1. Set is_active = true
+            const res1 = await fetch(`/api/admin/students/${id}`, {
+                method: 'PUT',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'X-Admin-Secret': state.secret 
+                },
+                body: JSON.stringify({ is_active: true })
+            });
+
+            // 2. Reset password to default '123'
+            const res2 = await fetch(`/api/admin/students/${id}/reset-password`, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'X-Admin-Secret': state.secret 
+                },
+                body: JSON.stringify({ new_password: '123' })
+            });
+
+            if (res1.ok && res2.ok) {
+                showToast(`Student ${roll} reactivated! Password reset to '123'.`);
+                loadStudentsView();
+            } else {
+                showToast("Failed to reactivate student", "error");
+            }
+        } catch (err) {
+            showToast("Network error reactivating student", "error");
+        }
+    };
+
+    // ──────────────────────────────────────────────
+    // STUDENT TELEMETRY INSPECTION MODAL
+    // ──────────────────────────────────────────────
+    window.inspectStudent = async function(studentId) {
+        if (!studentId) return;
+
+        const nameEl = document.getElementById('modalStudentName');
+        const metaEl = document.getElementById('modalStudentMeta');
+        const probBody = document.getElementById('modalProblemsBody');
+        const evBody = document.getElementById('modalEventsBody');
+
+        nameEl.textContent = 'Loading Student Telemetry...';
+        metaEl.textContent = '';
+        probBody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:1.5rem; color:var(--admin-text-muted);">Loading problem breakdown...</td></tr>`;
+        evBody.innerHTML = `<tr><td colspan="3" style="text-align:center; padding:1.5rem; color:var(--admin-text-muted);">Loading clickstream events...</td></tr>`;
+
+        studentModal.classList.remove('hidden');
+
+        try {
+            const res = await fetch(`/api/admin/student/${studentId}`, {
+                headers: { 'X-Admin-Secret': state.secret }
+            });
+
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                showToast(err.detail || 'Could not load student telemetry', 'error');
+                nameEl.textContent = 'Student Not Found';
+                probBody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:1.5rem; color:var(--admin-rose);">Failed to load student data.</td></tr>`;
+                evBody.innerHTML = '';
+                return;
+            }
+
+            const data = await res.json();
+            const s = data.student || {};
+            const problems = data.problems || [];
+            const events = data.events || [];
+
+            nameEl.textContent = `${s.name || 'Student'} (Roll ${s.roll_no || studentId})`;
+            const enrolled = s.created_at ? formatLocalDateOnly(s.created_at) : '—';
+            metaEl.textContent = `Roll No: ${escapeHtml(s.roll_no || '—')} | Section: ${escapeHtml(s.section || '—')} | Enrolled: ${enrolled}`;
+
+            // 1. Render Per-Problem Progress Breakdown
+            if (problems.length === 0) {
+                probBody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:1.5rem; color:var(--admin-text-muted);">No problems attempted yet.</td></tr>`;
+            } else {
+                probBody.innerHTML = problems.map(p => {
+                    const statusBadge = (p.status === 'solved')
+                        ? `<span class="pill pill-solved">Solved ✓</span>`
+                        : `<span class="pill pill-active">In Progress</span>`;
+                    const diffBadge = `<span class="pill" style="font-size:0.7rem; margin-left:6px; opacity:0.8;">${escapeHtml(p.difficulty || 'Easy')}</span>`;
+                    return `
+                        <tr>
+                            <td>
+                                <strong style="color:#fff;">${escapeHtml(p.title)}</strong>
+                                ${diffBadge}
+                                <div style="color:var(--admin-text-muted); font-size:0.75rem;">${escapeHtml(p.topic || '')}</div>
+                            </td>
+                            <td>${statusBadge}</td>
+                            <td class="code-font" style="color:var(--admin-cyan); font-weight:700;">${p.run_count || 0}</td>
+                            <td class="code-font" style="color:var(--admin-violet); font-weight:700;">${p.guidance_count || 0}</td>
+                            <td class="code-font" style="color:var(--admin-cyan);">${formatDuration(p.time_spent_seconds || 0)}</td>
+                            <td class="code-font" style="font-size:0.75rem; color:var(--admin-text-muted);">${escapeHtml(p.last_model_used || '—')}</td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            // 2. Render Recent Clickstream Events
+            if (events.length === 0) {
+                evBody.innerHTML = `<tr><td colspan="3" style="text-align:center; padding:1.5rem; color:var(--admin-text-muted);">No recent telemetry events recorded.</td></tr>`;
+            } else {
+                evBody.innerHTML = events.map(ev => {
+                    let metaDisplay = '';
+                    if (ev.event_data) {
+                        try {
+                            const parsed = typeof ev.event_data === 'string' ? JSON.parse(ev.event_data) : ev.event_data;
+                            metaDisplay = Object.entries(parsed)
+                                .map(([k, v]) => `<span style="color:var(--admin-text-muted);">${escapeHtml(k)}:</span> <span style="color:#e2e8f0;">${escapeHtml(String(v))}</span>`)
+                                .join(' | ');
+                        } catch {
+                            metaDisplay = escapeHtml(String(ev.event_data));
+                        }
+                    }
+                    return `
+                        <tr>
+                            <td><span class="pill pill-active" style="font-size:0.75rem;">${escapeHtml(ev.event_type || 'event')}</span></td>
+                            <td style="font-size:0.8rem; font-family:var(--font-mono);">${metaDisplay || '—'}</td>
+                            <td style="font-size:0.75rem; color:var(--admin-text-muted); white-space:nowrap;">${ev.created_at ? formatLocalDateTime(ev.created_at) : '—'}</td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+        } catch (err) {
+            console.error('Inspect student error:', err);
+            showToast('Network error loading student telemetry', 'error');
+            nameEl.textContent = 'Error Loading Student';
+            probBody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:1.5rem; color:var(--admin-rose);">Network error loading student data.</td></tr>`;
+            evBody.innerHTML = '';
         }
     };
 

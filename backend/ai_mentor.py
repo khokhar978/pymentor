@@ -18,6 +18,7 @@ load_dotenv()
 try:
     from pymentor.backend.quota_manager import (
         get_available_models,
+        get_available_report_models,
         record_model_usage,
         record_model_rate_limited,
         MODEL_CONFIGS
@@ -25,6 +26,7 @@ try:
 except ImportError:
     from backend.quota_manager import (
         get_available_models,
+        get_available_report_models,
         record_model_usage,
         record_model_rate_limited,
         MODEL_CONFIGS
@@ -128,7 +130,9 @@ def build_prompt(
             "IMPORTANT — Reference the ACTUAL values above (not hypothetical ones) in your feedback. For example:\n"
             "- 'Notice when you ran the code, the output showed [quote the actual output line] — that means...'\n"
             "- 'The error says [quote the actual error line] which tells us...'\n"
-            "Cross-check: if the actual output EXACTLY matches the expected sample output, strongly lean toward [STATUS: SOLVED].\n"
+            "Cross-check: if the actual output is functionally correct (same logic, same values, same structure), lean toward [STATUS: SOLVED].\n"
+            "Do NOT fail a student for cosmetic differences like different capitalization, punctuation, trailing spaces, or minor formatting variations.\n"
+            "If the core logic and numeric/string values are correct, it is SOLVED even if spacing or casing differs slightly.\n"
         )
 
     # COMPONENT 3: Similarity score as soft evidence
@@ -138,8 +142,11 @@ def build_prompt(
         sim_score_section = (
             "\n=== OUTPUT SIMILARITY TO SAMPLE (computed, not your judgment) ===\n"
             f"{score}% structural match against the expected sample output.\n"
-            "(This score ignores exact names/numbers since those legitimately vary — "
-            "treat it as one signal among several, not a verdict.)\n\n"
+            "GRADING RULE (follow strictly):\n"
+            "- Score >= 91%: The output is functionally correct. Mark [STATUS: SOLVED] UNLESS the core logic is fundamentally broken (e.g. hardcoded answers, crash, wrong formula).\n"
+            "- Score 70–90%: Likely a minor issue (formatting, extra/missing line). Give targeted feedback as IN_PROGRESS but acknowledge the code is close.\n"
+            "- Score < 70%: Significant logic or output mismatch. Mark IN_PROGRESS and guide the student.\n"
+            "IMPORTANT: Cosmetic differences (capitalization, punctuation, trailing whitespace, minor decimal precision if not explicitly required) MUST NOT cause a failure. Judge on logic and values, not cosmetics.\n\n"
         )
 
     # COMPONENT 4: Reference solution as grounding context (if provided)
@@ -339,3 +346,132 @@ def evaluate_code(
         "store_as_placeholder": True,
         "placeholder_text": _FAILED_ATTEMPT_PLACEHOLDER
     }
+
+
+# ─────────────────────────────────────────────
+# LEARNING REPORT — COMPLETELY SEPARATE SYSTEM
+# Not connected to guidance/evaluation logic in any way.
+# ─────────────────────────────────────────────
+# Model selection is fully delegated to the quota manager via get_available_report_models().
+# Only premium models (uses='both') are ever considered — never flash-lite or Gemma.
+
+def build_learning_report_prompt(
+    problem: Dict[str, Any],
+    submissions: List[Dict[str, Any]]
+) -> str:
+    """
+    Build a prompt that compiles all of a student's attempts for a problem
+    into a structured learning debrief. Completely separate from guidance prompts.
+    """
+    problem_section = (
+        f"=== PROBLEM ===\n"
+        f"Title: {problem.get('title', 'Unknown')}\n"
+        f"Topic: {problem.get('topic', '')}\n"
+        f"Description:\n{problem.get('description', '')}\n\n"
+        f"Sample Input:\n{problem.get('sample_input', '')}\n\n"
+        f"Sample Output:\n{problem.get('sample_output', '')}\n\n"
+    )
+
+    attempts_section = "=== STUDENT'S FULL ATTEMPT HISTORY ===\n"
+    for idx, sub in enumerate(submissions, 1):
+        is_final = (idx == len(submissions))
+        label = f"[Attempt #{idx}{'  ← FINAL (SOLVED)' if is_final else ''}]"
+        attempts_section += f"\n{label}\n"
+        attempts_section += f"Code:\n```python\n{sub.get('code', '(no code)')}\n```\n"
+        sim_out = sub.get("simulated_output", "").strip()
+        if sim_out:
+            attempts_section += f"Terminal Output:\n{sim_out}\n"
+        ai_resp = sub.get("ai_response", "").strip()
+        if ai_resp and not is_final:
+            attempts_section += f"Feedback Given:\n{ai_resp}\n"
+
+    report_instructions = (
+        "=== YOUR TASK ===\n"
+        "Write a structured, personal learning debrief for this student. "
+        "Your goal is to help them deeply understand what happened in this session — not just list concepts, "
+        "but explain WHY things work the way they do using the student's own code and output as evidence.\n\n"
+        "FORMAT (use these exact headings):\n\n"
+        "## ✅ What You Got Right\n"
+        "Point out what was correctly done from the start or well-structured. "
+        "Reference specific code lines or constructs from their earliest attempt.\n\n"
+        "## ❌ Key Mistakes Made\n"
+        "Describe each significant mistake. For each:\n"
+        "- Quote the EXACT incorrect line(s) from the code (use inline code formatting)\n"
+        "- Explain WHY it was wrong at a conceptual level — not just 'it was wrong', but what Python was actually doing\n"
+        "- Show what effect it had on the output (quote the actual terminal output)\n\n"
+        "## 🔧 How You Fixed It\n"
+        "Trace the progression across attempts. What specifically changed between attempts? "
+        "Quote the corrected line(s) and explain why the fix works.\n\n"
+        "## 💡 Core Concept to Understand\n"
+        "Explain the key concept(s) this problem tested in plain language. "
+        "Do NOT just name the concept (e.g. don't say 'this uses f-strings'). "
+        "Explain HOW and WHY it works, with a tiny illustrative example if needed. "
+        "Make them feel like they truly understand it, not just memorized a fix.\n\n"
+        "## 🚀 If You Try Again\n"
+        "One specific, actionable suggestion to make their solution even better or more Pythonic. "
+        "Keep this brief — one concrete idea.\n\n"
+        "RULES:\n"
+        "- Address the student directly ('you', 'your code')\n"
+        "- Always quote actual code lines or terminal output when making a point — never speak abstractly\n"
+        "- Encouraging tone, but honest about the mistakes\n"
+        "- Total length: 250–400 words\n"
+        "- Do NOT start with 'Certainly!' or generic AI filler\n"
+    )
+
+    return problem_section + attempts_section + "\n" + report_instructions
+
+
+def generate_learning_report(
+    problem: Dict[str, Any],
+    submissions: List[Dict[str, Any]]
+) -> str:
+    """
+    Generate a learning report using the quota manager's premium model cascade.
+    Asks get_available_report_models() for candidates (same logic as guidance),
+    then tries each in priority order with identical quota tracking.
+    Raises RuntimeError if all premium quota is exhausted — never falls back to
+    flash-lite or Gemma for a learning report.
+    """
+    client = get_client()
+    if not client:
+        raise RuntimeError("API key not configured — cannot generate learning report.")
+
+    candidate_models = get_available_report_models()
+    if not candidate_models:
+        raise RuntimeError(
+            "Learning report generation is temporarily unavailable — "
+            "all premium model quota is exhausted. Please try again tomorrow."
+        )
+
+    prompt = build_learning_report_prompt(problem, submissions)
+    last_error = None
+
+    for model_name in candidate_models:
+        try:
+            logger.info(f"[REPORT] Trying model: {model_name} for problem '{problem.get('title', '?')}'")
+            response = client.models.generate_content(model=model_name, contents=prompt)
+            text = response.text.strip() if response.text else ""
+
+            if not text:
+                logger.warning(f"[REPORT] Empty response from {model_name}, trying next.")
+                last_error = "Empty response"
+                continue
+
+            # Track quota usage — identical call to what guidance uses
+            record_model_usage(model_name)
+            logger.info(f"[REPORT] Report generated via {model_name} ({len(text)} chars)")
+            return text
+
+        except Exception as e:
+            error_str = str(e)
+            logger.warning(f"[REPORT] Model {model_name} failed: {error_str}")
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                record_model_rate_limited(model_name, error_str)
+            last_error = error_str
+            continue
+
+    logger.error(f"[REPORT] All premium models exhausted. Last error: {last_error}")
+    raise RuntimeError(
+        "Learning report generation is temporarily unavailable — "
+        "all premium model quota is exhausted. Please try again later or ask your instructor."
+    )

@@ -4,6 +4,7 @@ Practice session lifecycle: session start/resume, code save/run, heartbeats, and
 
 import time
 import logging
+import threading
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends
 
@@ -14,8 +15,8 @@ try:
         SessionStartRequest, SessionSaveRequest, HeartbeatRequest, SubmitCodeRequest
     )
     from pymentor.backend.deps import require_password_changed
-    from pymentor.backend.database import get_connection, log_event, get_student_daily_quota
-    from pymentor.backend.ai_mentor import evaluate_code
+    from pymentor.backend.database import get_connection, log_event, get_student_daily_quota, create_or_reset_learning_report, save_learning_report, mark_learning_report_failed
+    from pymentor.backend.ai_mentor import evaluate_code, generate_learning_report
 except ImportError:
     from backend.config import SUBMIT_COOLDOWN_SECONDS
     from backend import state
@@ -23,8 +24,8 @@ except ImportError:
         SessionStartRequest, SessionSaveRequest, HeartbeatRequest, SubmitCodeRequest
     )
     from backend.deps import require_password_changed
-    from backend.database import get_connection, log_event, get_student_daily_quota
-    from backend.ai_mentor import evaluate_code
+    from backend.database import get_connection, log_event, get_student_daily_quota, create_or_reset_learning_report, save_learning_report, mark_learning_report_failed
+    from backend.ai_mentor import evaluate_code, generate_learning_report
 
 logger = logging.getLogger("pymentor")
 
@@ -334,6 +335,34 @@ def submit_code(req: SubmitCodeRequest, student_id: int = Depends(require_passwo
     total_time_spent = (s_row["time_spent_seconds"] or 0) if s_row else 0
     conn.close()
 
+    # Fire-and-forget: generate learning report in background after SOLVED (attempt >= 2 only)
+    has_report = False
+    if is_correct and attempt_number >= 2:
+        has_report = True
+        create_or_reset_learning_report(student_id, problem_id, req.session_id)
+
+        # Build the full submissions list for the report (history + current solved attempt)
+        report_submissions = history + [{
+            "code": code,
+            "simulated_output": req.simulated_output or "",
+            "ai_response": feedback
+        }]
+        _problem_snapshot = dict(problem)  # snapshot so thread has its own copy
+
+        def _bg_generate_report():
+            try:
+                report_text = generate_learning_report(
+                    problem=_problem_snapshot,
+                    submissions=report_submissions
+                )
+                save_learning_report(student_id, problem_id, report_text)
+                logger.info(f"[REPORT] Background report saved for student={student_id} problem={problem_id}")
+            except Exception as e:
+                mark_learning_report_failed(student_id, problem_id)
+                logger.warning(f"[REPORT] Background generation failed for student={student_id} problem={problem_id}: {e}")
+
+        threading.Thread(target=_bg_generate_report, daemon=True).start()
+
     # Log telemetry event for guidance submission
     log_event(
         student_id=student_id,
@@ -364,5 +393,6 @@ def submit_code(req: SubmitCodeRequest, student_id: int = Depends(require_passwo
         "model_used": model_used,
         "time_spent_seconds": total_time_spent,
         "error": eval_result.get("error"),
-        "quota": get_student_daily_quota(student_id)
+        "quota": get_student_daily_quota(student_id),
+        "has_report": has_report
     }
