@@ -73,6 +73,11 @@
                     <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                     <span>AI & System Config</span>
                 </a>
+                <a href="#logs" class="nav-link" data-view="viewLogs">
+                    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                    <span>Security & Logs</span>
+                    <span id="sidebarLogsBadge" class="nav-badge" style="display: none; background: var(--admin-rose); color: white;">0</span>
+                </a>
             </nav>
 
             <div class="sidebar-footer">
@@ -482,7 +487,10 @@
                                 </div>
 
                                 <div style="background: var(--admin-surface-card); border: 1px solid var(--admin-border); border-radius: 12px; padding: 1.25rem;">
-                                    <h4 style="color: #fff; margin: 0 0 0.4rem; font-size: 0.95rem;">GitHub Cloud Failover</h4>
+                                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.4rem; gap: 0.5rem; flex-wrap: wrap;">
+                                        <h4 style="color: #fff; margin: 0; font-size: 0.95rem;">GitHub Cloud Failover</h4>
+                                        <button id="btnOpenGithubConfigModal" class="btn btn-secondary btn-xs">⚙️ Cloud Settings</button>
+                                    </div>
                                     <p id="githubBackupStatusText" style="color: var(--admin-text-muted); font-size: 0.82rem; margin: 0 0 1rem;">Checking cloud backup status...</p>
                                     <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
                                         <button id="btnTriggerCloudBackup" class="btn btn-secondary btn-sm">Sync to GitHub Now</button>
@@ -561,6 +569,103 @@
                     </div>
                 </section>
 
+                <!-- ══════════════════════════════════════════
+                     VIEW 8: SECURITY & SERVER LOGS (#logs)
+                     ══════════════════════════════════════════ -->
+                <section id="viewLogs" class="view-section">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 0.75rem;">
+                        <div>
+                            <div class="section-label" style="margin-bottom: 0.25rem;">Server Telemetry & Security Audit</div>
+                            <div style="font-size: 0.85rem; color: var(--admin-text-muted);">Real-time monitoring of deactivated student attempts, authentication failures, and system events.</div>
+                        </div>
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: var(--admin-text-muted); cursor: pointer;">
+                                <input type="checkbox" id="logsAutoRefreshCheckbox" checked>
+                                <span>Auto-refresh (15s)</span>
+                            </label>
+                            <button id="btnRefreshLogs" class="btn btn-secondary btn-sm">
+                                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                                Refresh
+                            </button>
+                            <a id="btnDownloadLogs" href="/api/admin/logs/download" class="btn btn-secondary btn-sm" target="_blank">
+                                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                Download logs.txt
+                            </a>
+                        </div>
+                    </div>
+
+                    <!-- Security KPI Cards -->
+                    <div class="metric-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 1.5rem;">
+                        <div class="metric-card rose" id="kpiDeactivatedCard">
+                            <div class="metric-title" style="display: flex; justify-content: space-between; align-items: center;">
+                                <span>Deactivated Attempts</span>
+                                <span style="font-size: 1rem;">⛔</span>
+                            </div>
+                            <div class="metric-value" id="kpiDeactivatedVal" style="color: var(--admin-rose);">0</div>
+                            <div class="metric-sub">Blocked inactive logins</div>
+                        </div>
+                        <div class="metric-card amber">
+                            <div class="metric-title" style="display: flex; justify-content: space-between; align-items: center;">
+                                <span>Failed Logins</span>
+                                <span style="font-size: 1rem;">⚠️</span>
+                            </div>
+                            <div class="metric-value" id="kpiFailedVal" style="color: var(--admin-amber);">0</div>
+                            <div class="metric-sub">Wrong passwords / locks</div>
+                        </div>
+                        <div class="metric-card emerald">
+                            <div class="metric-title" style="display: flex; justify-content: space-between; align-items: center;">
+                                <span>Successful Logins</span>
+                                <span style="font-size: 1rem;">✓</span>
+                            </div>
+                            <div class="metric-value" id="kpiSuccessVal" style="color: var(--admin-emerald);">0</div>
+                            <div class="metric-sub">Active sessions issued</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-title" style="display: flex; justify-content: space-between; align-items: center;">
+                                <span>AI Evaluations</span>
+                                <span style="font-size: 1rem;">🤖</span>
+                            </div>
+                            <div class="metric-value" id="kpiEvalVal" style="color: var(--admin-cyan);">0</div>
+                            <div class="metric-sub">Submissions graded</div>
+                        </div>
+                    </div>
+
+                    <!-- Filter / Search Controls -->
+                    <div class="admin-card" style="margin-bottom: 1rem; padding: 0.85rem 1rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+                            <!-- Filter Pills -->
+                            <div style="display: flex; gap: 0.4rem; flex-wrap: wrap;" id="logsCategoryPills">
+                                <button class="btn btn-sm btn-primary log-cat-btn" data-cat="important">All Important</button>
+                                <button class="btn btn-sm btn-secondary log-cat-btn" data-cat="deactivated">⛔ Deactivated Attempts</button>
+                                <button class="btn btn-sm btn-secondary log-cat-btn" data-cat="auth">🔑 Auth & Logins</button>
+                                <button class="btn btn-sm btn-secondary log-cat-btn" data-cat="errors">🚨 Warnings / Errors</button>
+                                <button class="btn btn-sm btn-secondary log-cat-btn" data-cat="eval">🤖 Submissions</button>
+                                <button class="btn btn-sm btn-secondary log-cat-btn" data-cat="all">📄 Raw All</button>
+                            </div>
+
+                            <!-- Search Input -->
+                            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                                <input type="text" id="logsSearchInput" class="input-control" placeholder="Search Roll, Sec, IP..." style="width: 200px; font-size: 0.8rem; padding: 0.4rem 0.75rem;">
+                                <span id="logsCountBadge" class="pill" style="font-size: 0.75rem; background: rgba(255,255,255,0.05);">0 records</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Terminal Log Stream -->
+                    <div class="admin-card" style="padding: 0; overflow: hidden; border: 1px solid var(--admin-card-border); background: #0b0f17;">
+                        <div style="padding: 0.6rem 1rem; border-bottom: 1px solid rgba(255,255,255,0.06); display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.25);">
+                            <div style="font-family: monospace; font-size: 0.75rem; color: #94a3b8; display: flex; align-items: center; gap: 0.5rem;">
+                                <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #22c55e;"></span>
+                                <span>LIVE SERVER LOG STREAM</span>
+                            </div>
+                            <div id="logsTimestampLabel" style="font-size: 0.75rem; color: #64748b;">Updated just now</div>
+                        </div>
+                        <div id="logsStreamContainer" style="font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.78rem; line-height: 1.5; padding: 0.75rem; max-height: 560px; overflow-y: auto; color: #e2e8f0; display: flex; flex-direction: column; gap: 0.35rem;">
+                            <div style="color: #64748b; padding: 1.5rem; text-align: center;">Loading system logs...</div>
+                        </div>
+                    </div>
+                </section>
+
             </main>
         </div>
     </div>
@@ -592,7 +697,7 @@
                         <label style="display: block; font-size: 0.8rem; color: var(--admin-text-muted); font-weight: 600; margin-bottom: 0.35rem;">Problem Title</label>
                         <input type="text" id="studioTitle" class="input-control" placeholder="e.g. Even or Odd Checker" style="width: 100%; box-sizing: border-box;">
                     </div>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
                         <div>
                             <label style="display: block; font-size: 0.8rem; color: var(--admin-text-muted); font-weight: 600; margin-bottom: 0.35rem;">Topic Category</label>
                             <input type="text" id="studioTopic" class="input-control" placeholder="e.g. Decision Making" style="width: 100%; box-sizing: border-box;">
@@ -603,6 +708,13 @@
                                 <option value="Easy">Easy</option>
                                 <option value="Medium">Medium</option>
                                 <option value="Hard">Hard</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display: block; font-size: 0.8rem; color: var(--admin-text-muted); font-weight: 600; margin-bottom: 0.35rem;">Publication Status</label>
+                            <select id="studioStatus" class="select-control" style="width: 100%; box-sizing: border-box;">
+                                <option value="active">🟢 Active (Published to Students)</option>
+                                <option value="inactive">🔴 Inactive (Draft / Hidden)</option>
                             </select>
                         </div>
                     </div>
@@ -911,6 +1023,44 @@
             <div style="display: flex; justify-content: flex-end; gap: 0.6rem;">
                 <button id="cancelApiKeyBtn" class="btn btn-secondary">Cancel</button>
                 <button id="saveApiKeyBtn" class="btn btn-emerald">Save & Verify Key</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ──────────────────────────────────────────────
+         MODAL: GITHUB CLOUD BACKUP SETTINGS
+         ────────────────────────────────────────────── -->
+    <div id="githubConfigModal" class="modal-overlay hidden">
+        <div class="modal-card" style="max-width: 480px;">
+            <div class="modal-header">
+                <h3 style="color: #fff; margin: 0; font-size: 1.15rem; font-weight: 700;">⚙️ GitHub Cloud Backup Settings</h3>
+                <button class="modal-close" id="closeGithubConfigModalBtn">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 1.25rem;">
+                <p style="color: var(--admin-text-muted); font-size: 0.82rem; margin-top: 0; margin-bottom: 1.25rem;">
+                    Back up student code submissions and database snapshots to your private GitHub repository.
+                </p>
+                <div style="margin-bottom: 1rem;">
+                    <label style="display: block; font-size: 0.8rem; color: var(--admin-text-muted); font-weight: 600; margin-bottom: 0.35rem;">GitHub Repository</label>
+                    <input type="text" id="ghConfigRepo" class="input-control" placeholder="e.g. khokhar978/pymentorbkp" style="width: 100%; box-sizing: border-box;">
+                    <span style="font-size: 0.72rem; color: var(--admin-text-faint);">Format: owner/repo (must be Private)</span>
+                </div>
+                <div style="margin-bottom: 1rem;">
+                    <label style="display: block; font-size: 0.8rem; color: var(--admin-text-muted); font-weight: 600; margin-bottom: 0.35rem;">Target Branch</label>
+                    <input type="text" id="ghConfigBranch" class="input-control" placeholder="main" value="main" style="width: 100%; box-sizing: border-box;">
+                </div>
+                <div style="margin-bottom: 1.25rem;">
+                    <label style="display: block; font-size: 0.8rem; color: var(--admin-text-muted); font-weight: 600; margin-bottom: 0.35rem;">Personal Access Token (PAT)</label>
+                    <div style="position: relative;">
+                        <input type="password" id="ghConfigToken" class="input-control" placeholder="Leave empty to keep existing token" style="width: 100%; box-sizing: border-box; padding-right: 2.5rem; font-family: monospace;">
+                        <button type="button" id="toggleGhTokenVisibilityBtn" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; color: #94a3b8; cursor: pointer; font-size: 0.85rem;" title="Toggle visibility">👁️</button>
+                    </div>
+                    <div id="ghCurrentTokenHint" style="font-size: 0.75rem; color: var(--admin-emerald); margin-top: 0.35rem;"></div>
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+                    <button id="cancelGithubConfigBtn" class="btn btn-secondary btn-sm">Cancel</button>
+                    <button id="saveGithubConfigBtn" class="btn btn-primary btn-sm">Save & Verify Connection</button>
+                </div>
             </div>
         </div>
     </div>

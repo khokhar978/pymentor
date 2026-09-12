@@ -25,7 +25,9 @@ document.addEventListener('DOMContentLoaded', () => {
         studentsSection: '',
         studentsSearch: '',
         topicsList: [],
-        problemsList: []
+        problemsList: [],
+        logsCategory: 'important',
+        logsQuery: ''
     };
 
     // DOM References
@@ -46,6 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const addStudentModal = document.getElementById('addStudentModal');
     const topicModal = document.getElementById('topicModal');
     const apiKeyModal = document.getElementById('apiKeyModal');
+    const githubConfigModal = document.getElementById('githubConfigModal');
 
     // ──────────────────────────────────────────────
     // TOAST NOTIFICATIONS
@@ -126,7 +129,8 @@ document.addEventListener('DOMContentLoaded', () => {
         '#students': 'Student Account Directory',
         '#lab': 'Active Lab Command Center',
         '#export': 'Exports & Disaster Recovery',
-        '#system': 'AI & System Configuration'
+        '#system': 'AI & System Configuration',
+        '#logs': 'Security & Server Logs'
     };
 
     const routeViews = {
@@ -136,7 +140,8 @@ document.addEventListener('DOMContentLoaded', () => {
         '#students': 'viewStudents',
         '#lab': 'viewLab',
         '#export': 'viewExport',
-        '#system': 'viewSystem'
+        '#system': 'viewSystem',
+        '#logs': 'viewLogs'
     };
 
     function handleRoute() {
@@ -171,6 +176,7 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (targetViewId === 'viewStudents') loadStudentsView();
         else if (targetViewId === 'viewExport') loadBackupsView();
         else if (targetViewId === 'viewSystem') loadRateLimitConfig();
+        else if (targetViewId === 'viewLogs') loadLogsView();
     }
 
     window.addEventListener('hashchange', handleRoute);
@@ -444,6 +450,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('studioRubric').value = '';
         document.getElementById('studioReferenceSolution').value = '';
         document.getElementById('studioTeacherInstructions').value = '';
+        document.getElementById('studioStatus').value = 'active';
 
         // Reset to first tab
         drawerTabBtns[0].click();
@@ -470,6 +477,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 document.getElementById('studioRubric').value = data.ai_rubric || '';
                 document.getElementById('studioReferenceSolution').value = data.reference_solution || '';
                 document.getElementById('studioTeacherInstructions').value = data.teacher_instructions || '';
+                document.getElementById('studioStatus').value = data.is_active ? 'active' : 'inactive';
 
                 drawerTabBtns[0].click();
                 problemDrawer.classList.remove('hidden');
@@ -501,6 +509,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const ai_rubric = document.getElementById('studioRubric').value.trim();
         const reference_solution = document.getElementById('studioReferenceSolution').value.trim();
         const teacher_instructions = document.getElementById('studioTeacherInstructions').value.trim();
+        const is_active = document.getElementById('studioStatus').value === 'active';
 
         if (!title || !topic || !description || !sample_output || !ai_rubric) {
             showToast("Please fill in all required problem fields", "error");
@@ -510,7 +519,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const payload = {
             title, topic, difficulty, concepts, description,
             starter_code, sample_input, sample_output, ai_rubric,
-            reference_solution, teacher_instructions
+            reference_solution, teacher_instructions,
+            is_active
         };
 
         try {
@@ -1222,6 +1232,101 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // ──────────────────────────────────────────────
+    // GITHUB CLOUD CONFIGURATION MODAL CONTROLLER
+    // ──────────────────────────────────────────────
+    const btnOpenGhModal = document.getElementById('btnOpenGithubConfigModal');
+    const btnCloseGhModal = document.getElementById('closeGithubConfigModalBtn');
+    const btnCancelGh = document.getElementById('cancelGithubConfigBtn');
+    const btnSaveGh = document.getElementById('saveGithubConfigBtn');
+    const ghRepoInput = document.getElementById('ghConfigRepo');
+    const ghBranchInput = document.getElementById('ghConfigBranch');
+    const ghTokenInput = document.getElementById('ghConfigToken');
+    const ghTokenHint = document.getElementById('ghCurrentTokenHint');
+    const btnToggleGhVis = document.getElementById('toggleGhTokenVisibilityBtn');
+
+    if (btnOpenGhModal) {
+        btnOpenGhModal.addEventListener('click', async () => {
+            ghRepoInput.value = '';
+            ghBranchInput.value = 'main';
+            ghTokenInput.value = '';
+            ghTokenHint.textContent = 'Loading current settings...';
+            githubConfigModal.classList.remove('hidden');
+
+            try {
+                const res = await fetch('/api/admin/config/github', {
+                    headers: { 'X-Admin-Secret': state.secret }
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    ghRepoInput.value = data.repo || '';
+                    ghBranchInput.value = data.branch || 'main';
+                    if (data.configured && data.masked_token) {
+                        ghTokenHint.innerHTML = `✓ Active token configured (<code>${escapeHtml(data.masked_token)}</code>). Leave blank to keep current token.`;
+                    } else {
+                        ghTokenHint.innerHTML = `<span style="color: var(--admin-amber);">⚠️ No token currently configured.</span>`;
+                    }
+                }
+            } catch (err) {
+                ghTokenHint.textContent = 'Could not load existing config.';
+            }
+        });
+    }
+
+    if (btnCloseGhModal) btnCloseGhModal.addEventListener('click', () => githubConfigModal.classList.add('hidden'));
+    if (btnCancelGh) btnCancelGh.addEventListener('click', () => githubConfigModal.classList.add('hidden'));
+
+    if (btnToggleGhVis) {
+        btnToggleGhVis.addEventListener('click', () => {
+            if (ghTokenInput.type === 'password') {
+                ghTokenInput.type = 'text';
+                btnToggleGhVis.textContent = '🔒';
+            } else {
+                ghTokenInput.type = 'password';
+                btnToggleGhVis.textContent = '👁️';
+            }
+        });
+    }
+
+    if (btnSaveGh) {
+        btnSaveGh.addEventListener('click', async () => {
+            const repo = ghRepoInput.value.trim();
+            const branch = ghBranchInput.value.trim() || 'main';
+            const token = ghTokenInput.value.trim();
+
+            if (!repo) {
+                showToast("Please enter a GitHub repository (owner/repo)", "error");
+                return;
+            }
+
+            const origText = btnSaveGh.textContent;
+            btnSaveGh.textContent = "Verifying with GitHub...";
+            btnSaveGh.disabled = true;
+
+            try {
+                const res = await fetch('/api/admin/config/github', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': state.secret },
+                    body: JSON.stringify({ repo, branch, token: token || null })
+                });
+
+                const data = await res.json();
+                if (res.ok) {
+                    showToast(data.message || "GitHub backup connected successfully!");
+                    githubConfigModal.classList.add('hidden');
+                    loadBackupsView();
+                } else {
+                    showToast(data.detail || "Failed to connect to GitHub.", "error");
+                }
+            } catch (err) {
+                showToast("Network error verifying GitHub connection", "error");
+            } finally {
+                btnSaveGh.textContent = origText;
+                btnSaveGh.disabled = false;
+            }
+        });
+    }
+
+    // ──────────────────────────────────────────────
     // VIEW 7: AI & SYSTEM CONTROLLER
     // ──────────────────────────────────────────────
     function renderSystemQuotas(quotas) {
@@ -1415,6 +1520,168 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // ──────────────────────────────────────────────
+    // VIEW 8: SECURITY AUDIT & SYSTEM LOGS CONTROLLER
+    // ──────────────────────────────────────────────
+    let logsSearchTimeout = null;
+
+    async function loadLogsView(isBackground = false) {
+        if (!state.secret) return;
+        const container = document.getElementById('logsStreamContainer');
+        const countBadge = document.getElementById('logsCountBadge');
+        const timeLabel = document.getElementById('logsTimestampLabel');
+        const dlBtn = document.getElementById('btnDownloadLogs');
+
+        if (dlBtn) {
+            dlBtn.href = `/api/admin/logs/download?secret=${encodeURIComponent(state.secret)}`;
+        }
+
+        if (!isBackground && container) {
+            container.innerHTML = `<div style="color: #64748b; padding: 2rem; text-align: center;">Fetching server logs and telemetry events...</div>`;
+        }
+
+        try {
+            const params = new URLSearchParams({
+                category: state.logsCategory || 'important',
+                limit: '300'
+            });
+            if (state.logsQuery) params.append('query', state.logsQuery);
+
+            const res = await fetch(`/api/admin/logs?${params.toString()}`, {
+                headers: { 'X-Admin-Secret': state.secret }
+            });
+
+            if (res.status === 401) {
+                logoutBtn.click();
+                return;
+            }
+
+            if (!res.ok) {
+                if (!isBackground) showToast("Failed to fetch server logs", "error");
+                if (container) container.innerHTML = `<div style="color: var(--admin-rose); padding: 1.5rem; text-align: center;">Error fetching logs from server.</div>`;
+                return;
+            }
+
+            const data = await res.json();
+
+            // Update KPI cards
+            const s = data.summary || {};
+            const deactVal = document.getElementById('kpiDeactivatedVal');
+            const failVal = document.getElementById('kpiFailedVal');
+            const succVal = document.getElementById('kpiSuccessVal');
+            const evalVal = document.getElementById('kpiEvalVal');
+
+            if (deactVal) deactVal.textContent = s.deactivated_attempts_count || 0;
+            if (failVal) failVal.textContent = s.failed_logins_count || 0;
+            if (succVal) succVal.textContent = s.successful_logins_count || 0;
+            if (evalVal) evalVal.textContent = s.eval_submissions_count || 0;
+
+            if (countBadge) {
+                countBadge.textContent = `${(data.logs || []).length} matching (${data.total_lines || 0} lines)`;
+            }
+            if (timeLabel) {
+                timeLabel.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+            }
+
+            renderLogsList(data.logs || []);
+
+        } catch (err) {
+            console.error("loadLogsView error:", err);
+            if (!isBackground && container) {
+                container.innerHTML = `<div style="color: var(--admin-rose); padding: 1.5rem; text-align: center;">Network error loading logs.</div>`;
+            }
+        }
+    }
+
+    function renderLogsList(logs) {
+        const container = document.getElementById('logsStreamContainer');
+        if (!container) return;
+
+        if (!logs || logs.length === 0) {
+            container.innerHTML = `
+                <div style="text-align: center; padding: 2.5rem; color: #64748b;">
+                    <div style="font-size: 1.5rem; margin-bottom: 0.5rem;">🔍</div>
+                    No log records found matching the active filter.
+                </div>
+            `;
+            return;
+        }
+
+        container.innerHTML = logs.map(item => {
+            const isDeact = item.is_deactivated;
+            const isFail = item.is_failed_login;
+            const isSucc = item.is_success_login;
+            const isEval = item.category === 'eval';
+            const isErr = item.level === 'WARNING' || item.level === 'ERROR' || item.level === 'CRITICAL';
+
+            let rowBg = 'background: rgba(255, 255, 255, 0.02); border-left: 3px solid rgba(148, 163, 184, 0.3);';
+            let badge = `<span class="pill" style="background: rgba(255, 255, 255, 0.08); color: #94a3b8; font-size: 0.7rem;">${escapeHtml(item.level || 'INFO')}</span>`;
+
+            if (isDeact) {
+                rowBg = 'background: rgba(244, 63, 94, 0.12); border-left: 3px solid var(--admin-rose); box-shadow: 0 0 12px rgba(244, 63, 94, 0.08);';
+                badge = `<span class="pill" style="background: rgba(244, 63, 94, 0.25); color: #fda4af; font-weight: 700; font-size: 0.72rem;">⛔ DEACTIVATED REJECT</span>`;
+            } else if (isFail) {
+                rowBg = 'background: rgba(245, 158, 11, 0.08); border-left: 3px solid var(--admin-amber);';
+                badge = `<span class="pill" style="background: rgba(245, 158, 11, 0.2); color: #fde68a; font-weight: 600; font-size: 0.72rem;">⚠️ LOGIN FAILED</span>`;
+            } else if (isSucc) {
+                rowBg = 'background: rgba(34, 197, 94, 0.06); border-left: 3px solid var(--admin-emerald);';
+                badge = `<span class="pill" style="background: rgba(34, 197, 94, 0.2); color: #86efac; font-weight: 600; font-size: 0.72rem;">✓ LOGIN SUCCESS</span>`;
+            } else if (isEval) {
+                rowBg = 'background: rgba(6, 182, 212, 0.05); border-left: 3px solid var(--admin-cyan);';
+                badge = `<span class="pill" style="background: rgba(6, 182, 212, 0.2); color: #67e8f9; font-weight: 600; font-size: 0.72rem;">🤖 AI EVAL</span>`;
+            } else if (isErr) {
+                rowBg = 'background: rgba(244, 63, 94, 0.07); border-left: 3px solid var(--admin-rose);';
+                badge = `<span class="pill" style="background: rgba(244, 63, 94, 0.2); color: #fda4af; font-weight: 600; font-size: 0.72rem;">🚨 ${escapeHtml(item.level)}</span>`;
+            }
+
+            const ts = item.timestamp ? `<span style="color: #64748b; font-size: 0.73rem; white-space: nowrap;">${escapeHtml(item.timestamp)}</span>` : '';
+
+            let studentPill = '';
+            if (item.roll_no || item.section) {
+                studentPill = `<span class="pill" style="background: rgba(99, 102, 241, 0.15); color: #a5b4fc; font-size: 0.72rem;">${item.section ? 'Sec ' + escapeHtml(item.section) + ' ' : ''}${item.roll_no ? 'Roll ' + escapeHtml(item.roll_no) : ''}</span>`;
+            }
+
+            let inspectAction = '';
+            if (item.roll_no) {
+                inspectAction = `<button class="btn btn-secondary btn-xs" onclick="window.inspectStudentByRoll('${escapeHtml(item.roll_no)}')" style="padding: 1px 7px; font-size: 0.7rem;" title="Inspect student telemetry">Inspect</button>`;
+            }
+
+            return `
+                <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; padding: 0.45rem 0.65rem; border-radius: 4px; ${rowBg}">
+                    <div style="display: flex; align-items: flex-start; gap: 0.6rem; flex-grow: 1; flex-wrap: wrap;">
+                        ${ts}
+                        ${badge}
+                        ${studentPill}
+                        <span style="color: #e2e8f0; word-break: break-word;">${escapeHtml(item.message)}</span>
+                    </div>
+                    ${inspectAction ? `<div style="flex-shrink: 0;">${inspectAction}</div>` : ''}
+                </div>
+            `;
+        }).join('');
+    }
+
+    // Helper: inspect student by roll number from logs
+    window.inspectStudentByRoll = async function(roll) {
+        if (!roll) return;
+        try {
+            const res = await fetch(`/api/admin/students?search=${encodeURIComponent(roll)}&limit=1`, {
+                headers: { 'X-Admin-Secret': state.secret }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                const sList = data.students || [];
+                const exact = sList.find(s => String(s.roll_no) === String(roll)) || sList[0];
+                if (exact && exact.id) {
+                    window.inspectStudent(exact.id);
+                    return;
+                }
+            }
+            showToast(`Student with roll ${roll} not found in database.`, "error");
+        } catch (err) {
+            showToast("Network error finding student", "error");
+        }
+    };
+
+    // ──────────────────────────────────────────────
     // EVENT LISTENERS & MODAL CLOSE
     // ──────────────────────────────────────────────
     function setupEventListeners() {
@@ -1428,8 +1695,70 @@ document.addEventListener('DOMContentLoaded', () => {
         if (pTopic) pTopic.addEventListener('change', renderProblemsTable);
         if (pDiff) pDiff.addEventListener('change', renderProblemsTable);
 
+        // Logs View Event Listeners
+        const logsCatPills = document.querySelectorAll('.log-cat-btn');
+        logsCatPills.forEach(btn => {
+            btn.addEventListener('click', () => {
+                logsCatPills.forEach(b => {
+                    b.classList.remove('btn-primary');
+                    b.classList.add('btn-secondary');
+                });
+                btn.classList.remove('btn-secondary');
+                btn.classList.add('btn-primary');
+                state.logsCategory = btn.dataset.cat || 'important';
+                loadLogsView();
+            });
+        });
+
+        const kpiDeactCard = document.getElementById('kpiDeactivatedCard');
+        if (kpiDeactCard) {
+            kpiDeactCard.style.cursor = 'pointer';
+            kpiDeactCard.addEventListener('click', () => {
+                const deactBtn = document.querySelector('.log-cat-btn[data-cat="deactivated"]');
+                if (deactBtn) deactBtn.click();
+            });
+        }
+
+        const logsSearchInput = document.getElementById('logsSearchInput');
+        if (logsSearchInput) {
+            logsSearchInput.addEventListener('input', (e) => {
+                clearTimeout(logsSearchTimeout);
+                logsSearchTimeout = setTimeout(() => {
+                    state.logsQuery = e.target.value.trim();
+                    loadLogsView();
+                }, 300);
+            });
+        }
+
+        const btnRefreshLogs = document.getElementById('btnRefreshLogs');
+        if (btnRefreshLogs) {
+            btnRefreshLogs.addEventListener('click', () => {
+                loadLogsView();
+                showToast("Logs refreshed");
+            });
+        }
+
+        const btnDownloadLogs = document.getElementById('btnDownloadLogs');
+        if (btnDownloadLogs) {
+            btnDownloadLogs.addEventListener('click', () => {
+                if (state.secret) {
+                    btnDownloadLogs.href = `/api/admin/logs/download?secret=${encodeURIComponent(state.secret)}`;
+                }
+            });
+        }
+
+        // 15-second auto refresh for logs view
+        setInterval(() => {
+            if (state.activeView === 'viewLogs') {
+                const autoCheck = document.getElementById('logsAutoRefreshCheckbox');
+                if (autoCheck && autoCheck.checked) {
+                    loadLogsView(true);
+                }
+            }
+        }, 15000);
+
         // Click outside modal or drawer to close
-        [studentModal, problemDrawer, resetPwModal, bulkResetModal, addStudentModal, topicModal, apiKeyModal, studentRateLimitModal].forEach(m => {
+        [studentModal, problemDrawer, resetPwModal, bulkResetModal, addStudentModal, topicModal, apiKeyModal, studentRateLimitModal, githubConfigModal].forEach(m => {
             if (m) {
                 m.addEventListener('click', (e) => {
                     if (e.target === m) m.classList.add('hidden');
@@ -1439,7 +1768,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
-                [studentModal, problemDrawer, resetPwModal, bulkResetModal, addStudentModal, topicModal, apiKeyModal, studentRateLimitModal].forEach(m => {
+                [studentModal, problemDrawer, resetPwModal, bulkResetModal, addStudentModal, topicModal, apiKeyModal, studentRateLimitModal, githubConfigModal].forEach(m => {
                     if (m) m.classList.add('hidden');
                 });
             }

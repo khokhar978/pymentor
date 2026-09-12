@@ -9,6 +9,7 @@ import os
 import time
 import json
 import base64
+import gzip
 import shutil
 import sqlite3
 import logging
@@ -20,14 +21,32 @@ from typing import Optional, Dict, Any, List
 logger = logging.getLogger("pymentor.github_backup")
 
 try:
+    from pymentor.backend.config import ENV_PATH
+except ImportError:
+    try:
+        from backend.config import ENV_PATH
+    except ImportError:
+        ENV_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path=ENV_PATH)
+except Exception:
+    pass
+
+try:
     from pymentor.backend.database import DB_PATH, get_connection
 except ImportError:
     from backend.database import DB_PATH, get_connection
 
-# GitHub Configuration from .env
-GITHUB_TOKEN = os.environ.get("GITHUB_BACKUP_TOKEN", "").strip()
-GITHUB_REPO = os.environ.get("GITHUB_BACKUP_REPO", "").strip()  # e.g. "khokhar978/pymentor-backups"
-GITHUB_BRANCH = os.environ.get("GITHUB_BACKUP_BRANCH", "main").strip()
+def get_github_token() -> str:
+    return os.environ.get("GITHUB_BACKUP_TOKEN", "").strip()
+
+def get_github_repo() -> str:
+    return os.environ.get("GITHUB_BACKUP_REPO", "").strip()
+
+def get_github_branch() -> str:
+    return os.environ.get("GITHUB_BACKUP_BRANCH", "main").strip()
 
 # Optional: Direct peer server URL for instant laptop-to-host sync (leave empty on host PC)
 HOST_SERVER_URL = os.environ.get("HOST_SERVER_URL", "").strip()
@@ -38,7 +57,7 @@ BACKUP_DIR = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "backups")
 
 def is_github_configured() -> bool:
     """Returns True if GitHub repository and personal access token are configured."""
-    return bool(GITHUB_TOKEN and GITHUB_REPO)
+    return bool(get_github_token() and get_github_repo())
 
 
 def create_local_hot_backup(backup_dir: str = BACKUP_DIR) -> str:
@@ -107,20 +126,26 @@ def is_candidate_db_newer(candidate_path: str, local_path: str) -> bool:
     """
     if not os.path.exists(local_path):
         return True
+    loc_conn = None
+    cand_conn = None
     try:
-        with sqlite3.connect(local_path) as loc_conn:
-            loc_cur = loc_conn.cursor()
-            loc_cur.execute("SELECT COALESCE(MAX(id), 0), COUNT(*) FROM submissions")
-            loc_sub_max_id, loc_sub_count = loc_cur.fetchone()
-            loc_cur.execute("SELECT COALESCE(MAX(id), 0) FROM events")
-            loc_evt_max_id = loc_cur.fetchone()[0]
+        loc_conn = sqlite3.connect(local_path)
+        loc_cur = loc_conn.cursor()
+        loc_cur.execute("SELECT COALESCE(MAX(id), 0), COUNT(*) FROM submissions")
+        loc_sub_max_id, loc_sub_count = loc_cur.fetchone()
+        loc_cur.execute("SELECT COALESCE(MAX(id), 0) FROM events")
+        loc_evt_max_id = loc_cur.fetchone()[0]
+        loc_conn.close()
+        loc_conn = None
 
-        with sqlite3.connect(candidate_path) as cand_conn:
-            cand_cur = cand_conn.cursor()
-            cand_cur.execute("SELECT COALESCE(MAX(id), 0), COUNT(*) FROM submissions")
-            cand_sub_max_id, cand_sub_count = cand_cur.fetchone()
-            cand_cur.execute("SELECT COALESCE(MAX(id), 0) FROM events")
-            cand_evt_max_id = cand_cur.fetchone()[0]
+        cand_conn = sqlite3.connect(candidate_path)
+        cand_cur = cand_conn.cursor()
+        cand_cur.execute("SELECT COALESCE(MAX(id), 0), COUNT(*) FROM submissions")
+        cand_sub_max_id, cand_sub_count = cand_cur.fetchone()
+        cand_cur.execute("SELECT COALESCE(MAX(id), 0) FROM events")
+        cand_evt_max_id = cand_cur.fetchone()[0]
+        cand_conn.close()
+        cand_conn = None
 
         if cand_sub_max_id > loc_sub_max_id or cand_sub_count > loc_sub_count:
             logger.info(
@@ -146,15 +171,29 @@ def is_candidate_db_newer(candidate_path: str, local_path: str) -> bool:
     except Exception as e:
         logger.error(f"[BACKUP SYNC] Error comparing database recency: {e}. Preserving local database.")
         return False
+    finally:
+        if loc_conn:
+            try:
+                loc_conn.close()
+            except Exception:
+                pass
+        if cand_conn:
+            try:
+                cand_conn.close()
+            except Exception:
+                pass
 
 
 def get_github_file_info(file_path: str = "pymentor_latest.db") -> Optional[Dict[str, Any]]:
     """Fetches commit metadata and file SHA from GitHub repository."""
     if not is_github_configured():
         return None
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path}?ref={GITHUB_BRANCH}"
+    token = get_github_token()
+    repo = get_github_repo()
+    branch = get_github_branch()
+    url = f"https://api.github.com/repos/{repo}/contents/{file_path}?ref={branch}"
     req = urllib.request.Request(url, headers={
-        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github.v3+json",
         "User-Agent": "PyMentor-Backup-Agent"
     })
@@ -235,9 +274,14 @@ def sync_from_github_on_startup():
         return
 
     try:
-        info = get_github_file_info("pymentor_latest.db")
+        # Check pymentor_latest.db.gz first, then pymentor_latest.db
+        info = get_github_file_info("pymentor_latest.db.gz")
+        is_gz = bool(info and "download_url" in info)
+        if not is_gz:
+            info = get_github_file_info("pymentor_latest.db")
+
         if not info or "download_url" not in info:
-            logger.info("[GITHUB SYNC] No pymentor_latest.db found in GitHub repository. Using local database.")
+            logger.info("[GITHUB SYNC] No pymentor_latest.db(.gz) found in GitHub repository. Using local database.")
             return
 
         download_url = info["download_url"]
@@ -247,38 +291,91 @@ def sync_from_github_on_startup():
         local_exists = os.path.exists(DB_PATH)
         local_size = os.path.getsize(DB_PATH) if local_exists else 0
 
-        logger.info(f"[GITHUB SYNC] Downloading pymentor_latest.db ({remote_size:,} bytes) from GitHub...")
+        logger.info(f"[GITHUB SYNC] Downloading backup ({remote_size:,} bytes) from GitHub...")
+        token = get_github_token()
         req = urllib.request.Request(download_url, headers={
-            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Authorization": f"Bearer {token}",
             "User-Agent": "PyMentor-Backup-Agent"
         })
-        with urllib.request.urlopen(req, timeout=15) as res:
-            with open(temp_path, "wb") as f:
-                shutil.copyfileobj(res, f)
+        with urllib.request.urlopen(req, timeout=30) as res:
+            downloaded_bytes = res.read()
+
+        # Decompress if gzipped
+        if is_gz or downloaded_bytes.startswith(b"\x1f\x8b"):
+            try:
+                db_bytes = gzip.decompress(downloaded_bytes)
+            except Exception as e:
+                logger.error(f"[GITHUB SYNC] Gzip decompression failed: {e}")
+                return
+        else:
+            db_bytes = downloaded_bytes
+
+        with open(temp_path, "wb") as f:
+            f.write(db_bytes)
 
         if verify_sqlite_integrity(temp_path):
             if is_candidate_db_newer(temp_path, DB_PATH):
                 if local_exists:
                     shutil.copy2(DB_PATH, DB_PATH + ".bak")
                 shutil.move(temp_path, DB_PATH)
-                logger.info(f"[GITHUB SYNC] SUCCESS! Database restored from GitHub ({remote_size:,} bytes).")
+                logger.info(f"[GITHUB SYNC] SUCCESS! Database restored from GitHub ({len(db_bytes):,} uncompressed bytes).")
             else:
                 logger.info("[GITHUB SYNC] Local database is already current or newer than GitHub backup. Keeping local copy.")
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
         else:
             logger.error("[GITHUB SYNC] Downloaded database failed integrity check. Keeping local copy.")
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
 
     except Exception as e:
         logger.error(f"[GITHUB SYNC] Error restoring from GitHub: {e}")
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
 
 
-def backup_to_github() -> Dict[str, Any]:
+_last_backup_fingerprint = None
+
+def get_database_fingerprint() -> str:
+    """Returns a string representing the current mutation state of the database."""
+    if not os.path.exists(DB_PATH):
+        return ""
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*), COALESCE(MAX(id), 0) FROM submissions")
+        sub_count, sub_max_id = cur.fetchone()
+        cur.execute("SELECT COUNT(*), COALESCE(MAX(id), 0) FROM events")
+        evt_count, evt_max_id = cur.fetchone()
+        return f"s:{sub_count}:{sub_max_id}|e:{evt_count}:{evt_max_id}"
+    except Exception:
+        return ""
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def backup_to_github(only_if_changed: bool = False) -> Dict[str, Any]:
     """
     Creates a fresh local hot-backup and pushes it to private GitHub repository.
+    Uses gzip compression for fast, lightweight cloud snapshots.
+    If only_if_changed is True, skips push if no new student submissions/events occurred.
     """
+    global _last_backup_fingerprint
+
+    current_fingerprint = get_database_fingerprint()
+    if only_if_changed and _last_backup_fingerprint and current_fingerprint == _last_backup_fingerprint:
+        logger.info("[AUTO BACKUP] No new database activity detected since last backup. Skipping push.")
+        return {
+            "status": "skipped",
+            "reason": "No database changes since last backup",
+            "fingerprint": current_fingerprint
+        }
+
     local_path = create_local_hot_backup()
     filename = os.path.basename(local_path)
     file_size = os.path.getsize(local_path)
@@ -295,36 +392,45 @@ def backup_to_github() -> Dict[str, Any]:
 
     if is_github_configured():
         try:
+            token = get_github_token()
+            repo = get_github_repo()
+            branch = get_github_branch()
+
+            # Read and gzip compress binary database
+            with open(local_path, "rb") as f:
+                raw_bytes = f.read()
+            compressed = gzip.compress(raw_bytes, 9)
+            content_b64 = base64.b64encode(compressed).decode("utf-8")
+            comp_size = len(compressed)
+
             # Check existing file SHA on GitHub
-            info = get_github_file_info("pymentor_latest.db")
+            info = get_github_file_info("pymentor_latest.db.gz")
             sha = info.get("sha") if info else None
 
-            # Read and encode binary database
-            with open(local_path, "rb") as f:
-                content_b64 = base64.b64encode(f.read()).decode("utf-8")
-
-            url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/pymentor_latest.db"
+            url = f"https://api.github.com/repos/{repo}/contents/pymentor_latest.db.gz"
             payload = {
-                "message": f"auto-backup: PyMentor database snapshot {timestamp} ({file_size:,} bytes)",
+                "message": f"auto-backup: PyMentor database snapshot {timestamp} ({file_size:,} bytes uncompressed, {comp_size:,} bytes compressed)",
                 "content": content_b64,
-                "branch": GITHUB_BRANCH
+                "branch": branch
             }
             if sha:
                 payload["sha"] = sha
 
             data = json.dumps(payload).encode("utf-8")
             req = urllib.request.Request(url, data=data, headers={
-                "Authorization": f"Bearer {GITHUB_TOKEN}",
+                "Authorization": f"Bearer {token}",
                 "Accept": "application/vnd.github.v3+json",
                 "Content-Type": "application/json",
                 "User-Agent": "PyMentor-Backup-Agent"
             }, method="PUT")
 
-            with urllib.request.urlopen(req, timeout=30) as res:
+            with urllib.request.urlopen(req, timeout=60) as res:
                 if res.status in (200, 201):
                     result["github_uploaded"] = True
-                    result["github_repo"] = GITHUB_REPO
-                    logger.info(f"[GITHUB BACKUP] Uploaded {filename} ({file_size:,} bytes) to GitHub repo '{GITHUB_REPO}'.")
+                    result["github_repo"] = repo
+                    result["compressed_size_bytes"] = comp_size
+                    _last_backup_fingerprint = current_fingerprint
+                    logger.info(f"[GITHUB BACKUP] Uploaded {filename} ({file_size:,} -> {comp_size:,} bytes) to GitHub repo '{repo}'.")
         except Exception as e:
             logger.error(f"[GITHUB BACKUP] Failed uploading to GitHub: {e}")
             result["github_error"] = str(e)
@@ -347,6 +453,29 @@ def get_latest_local_backup() -> Optional[str]:
     return DB_PATH if os.path.exists(DB_PATH) else None
 
 
+def get_github_backups_count() -> int:
+    """Counts number of commits on pymentor_latest.db(.gz) in the GitHub repo."""
+    if not is_github_configured():
+        return 0
+    token = get_github_token()
+    repo = get_github_repo()
+    for fname in ("pymentor_latest.db.gz", "pymentor_latest.db"):
+        url = f"https://api.github.com/repos/{repo}/commits?path={fname}&per_page=100"
+        req = urllib.request.Request(url, headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "PyMentor-Backup-Agent"
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=10) as res:
+                commits = json.loads(res.read())
+                if isinstance(commits, list) and len(commits) > 0:
+                    return len(commits)
+        except Exception:
+            pass
+    return 0
+
+
 def list_backups() -> Dict[str, Any]:
     """Lists local and remote GitHub backups."""
     local_backups = []
@@ -361,10 +490,119 @@ def list_backups() -> Dict[str, Any]:
                 })
         local_backups.sort(key=lambda x: x["modified"], reverse=True)
 
-    github_status = "Connected" if is_github_configured() else "Not Configured"
+    gh_configured = is_github_configured()
+    gh_repo = get_github_repo() if gh_configured else None
+    gh_count = get_github_backups_count() if gh_configured else 0
+
     return {
-        "github_configured": is_github_configured(),
-        "github_status": github_status,
-        "github_repo": GITHUB_REPO if is_github_configured() else None,
+        "github_configured": gh_configured,
+        "github_status": "Connected" if gh_configured else "Not Configured",
+        "github_repo": gh_repo,
+        "github_backups_count": gh_count,
         "local_backups": local_backups
+    }
+
+
+def save_github_config(token: Optional[str] = None, repo: Optional[str] = None, branch: Optional[str] = "main") -> Dict[str, Any]:
+    """
+    Validates GitHub credentials against GitHub API, updates in-memory env, and safely persists to .env.
+    """
+    cur_token = get_github_token()
+    cur_repo = get_github_repo()
+    cur_branch = get_github_branch()
+
+    new_token = token.strip() if (token and token.strip()) else cur_token
+    new_repo = repo.strip() if (repo and repo.strip()) else cur_repo
+    new_branch = branch.strip() if (branch and branch.strip()) else (cur_branch or "main")
+
+    if not new_token:
+        raise ValueError("GitHub Personal Access Token is required.")
+    if not new_repo or "/" not in new_repo:
+        raise ValueError("Valid repository in format 'owner/repo' is required.")
+
+    # Test verification against GitHub API
+    url = f"https://api.github.com/repos/{new_repo}"
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {new_token}",
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "PyMentor-Backup-Agent"
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=12) as res:
+            repo_data = json.loads(res.read())
+            repo_full_name = repo_data.get("full_name", new_repo)
+            is_private = repo_data.get("private", False)
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise ValueError("GitHub authentication failed. Token is invalid or expired.")
+        elif e.code == 404:
+            raise ValueError(f"Repository '{new_repo}' not found, or token lacks 'repo' permissions to access it.")
+        else:
+            raise ValueError(f"GitHub API returned HTTP {e.code}: {e.reason}")
+    except Exception as e:
+        raise ValueError(f"Network error contacting GitHub: {e}")
+
+    # Update in-memory environment variables
+    os.environ["GITHUB_BACKUP_TOKEN"] = new_token
+    os.environ["GITHUB_BACKUP_REPO"] = repo_full_name
+    os.environ["GITHUB_BACKUP_BRANCH"] = new_branch
+
+    # Persist to .env safely
+    try:
+        from pymentor.backend.config import ENV_PATH
+    except ImportError:
+        from backend.config import ENV_PATH
+
+    env_lines = []
+    if os.path.exists(ENV_PATH):
+        with open(ENV_PATH, "r", encoding="utf-8") as f:
+            env_lines = f.readlines()
+
+    updates = {
+        "GITHUB_BACKUP_TOKEN": new_token,
+        "GITHUB_BACKUP_REPO": repo_full_name,
+        "GITHUB_BACKUP_BRANCH": new_branch
+    }
+
+    found_keys = set()
+    for i, line in enumerate(env_lines):
+        line_clean = line.strip()
+        for k in updates:
+            if line_clean.startswith(f"{k}="):
+                env_lines[i] = f"{k}={updates[k]}\n"
+                found_keys.add(k)
+
+    for k, v in updates.items():
+        if k not in found_keys:
+            if env_lines and not env_lines[-1].endswith("\n"):
+                env_lines.append("\n")
+            env_lines.append(f"{k}={v}\n")
+
+    with open(ENV_PATH, "w", encoding="utf-8") as f:
+        f.writelines(env_lines)
+
+    masked_token = (new_token[:4] + "..." + new_token[-4:]) if len(new_token) > 8 else "***"
+    return {
+        "status": "success",
+        "message": f"GitHub connected successfully to {repo_full_name} ({'Private' if is_private else 'Public'})!",
+        "repo": repo_full_name,
+        "branch": new_branch,
+        "masked_token": masked_token,
+        "is_private": is_private
+    }
+
+
+def get_github_status_summary() -> Dict[str, Any]:
+    token = get_github_token()
+    repo = get_github_repo()
+    branch = get_github_branch()
+    masked_token = (token[:4] + "..." + token[-4:]) if len(token) > 8 else ("***" if token else "")
+    configured = is_github_configured()
+    count = get_github_backups_count() if configured else 0
+    return {
+        "configured": configured,
+        "repo": repo,
+        "branch": branch,
+        "masked_token": masked_token,
+        "backups_count": count
     }

@@ -57,6 +57,19 @@ def login_student(req: LoginRequest, request: Request):
     )
     student = cursor.fetchone()
 
+    if student and student["is_active"] == 0:
+        pwd_valid = verify_password(password, student["password"])
+        conn.close()
+        log_event(
+            student_id=student["id"],
+            event_type="deactivated_login_attempt",
+            event_data={"section": section, "roll_no": roll_no, "name": student["name"], "pwd_valid": pwd_valid, "ip": client_ip}
+        )
+        logger.warning(
+            f"[STUDENT AUTH] Login REJECTED (Deactivated): '{student['name']}' (Sec '{section}', Roll '{roll_no}') from IP={client_ip} (PwdValid={pwd_valid})"
+        )
+        raise HTTPException(status_code=403, detail="Your account has been deactivated due to inactivity. Please contact your instructor.")
+
     if not student or not verify_password(password, student["password"]):
         conn.close()
         # Record failure
@@ -65,11 +78,6 @@ def login_student(req: LoginRequest, request: Request):
         state.login_attempts[rate_key] = (fails, lock)
         logger.warning(f"[STUDENT AUTH] Login FAILED: Sec '{section}', Roll '{roll_no}' from IP={client_ip} (Attempt {fails}/5)")
         raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    if student["is_active"] == 0:
-        conn.close()
-        logger.warning(f"[STUDENT AUTH] Login REJECTED (Deactivated): Sec '{section}', Roll '{roll_no}'")
-        raise HTTPException(status_code=403, detail="Your account has been deactivated due to inactivity. Please contact your instructor.")
 
     # Success, reset failures
     if rate_key in state.login_attempts:

@@ -118,7 +118,7 @@ def verify_admin(request: Request) -> bool:
         elif now >= locked_until and locked_until > 0:
             state.admin_attempts[client_ip] = (0, 0)
 
-    secret = request.headers.get("X-Admin-Secret", "")
+    secret = request.headers.get("X-Admin-Secret") or request.query_params.get("admin_secret") or request.query_params.get("secret", "")
     if not secret or not secrets.compare_digest(secret, ADMIN_SECRET):
         fails = state.admin_attempts.get(client_ip, (0, 0))[0] + 1
         lock = now + 900 if fails >= 5 else 0  # 15 minutes lockout after 5 failed attempts

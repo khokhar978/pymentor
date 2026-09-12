@@ -5,6 +5,7 @@ Initializes application, registers middleware, mounts static assets, and include
 
 import os
 import time
+import asyncio
 import logging
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -14,12 +15,12 @@ from fastapi.staticfiles import StaticFiles
 try:
     from pymentor.backend import config, state
     from pymentor.backend.database import init_db
-    from pymentor.backend.github_backup import sync_from_github_on_startup, backup_to_github
+    from pymentor.backend.github_backup import sync_from_github_on_startup, backup_to_github, is_github_configured
     from pymentor.backend.routers import pages, content, auth, session, telemetry, admin, reports
 except ImportError:
     from backend import config, state
     from backend.database import init_db
-    from backend.github_backup import sync_from_github_on_startup, backup_to_github
+    from backend.github_backup import sync_from_github_on_startup, backup_to_github, is_github_configured
     from backend.routers import pages, content, auth, session, telemetry, admin, reports
 
 # Configure basic file logging to logs.txt
@@ -74,6 +75,29 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Admin-Secret"],
 )
+
+
+async def periodic_backup_loop():
+    """Background loop that periodically pushes hot SQLite backups to GitHub."""
+    # Allow initial startup load to settle (60 seconds)
+    await asyncio.sleep(60)
+    while True:
+        try:
+            if is_github_configured():
+                await asyncio.to_thread(backup_to_github, True)
+            # Sleep 1 hour (3600 seconds) between checks
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning(f"[PERIODIC BACKUP] Error in auto-backup cycle: {e}")
+            await asyncio.sleep(300)
+
+
+@app.on_event("startup")
+async def on_startup_events():
+    """Start background periodic cloud backup task."""
+    asyncio.create_task(periodic_backup_loop())
 
 
 @app.on_event("shutdown")

@@ -75,6 +75,7 @@ class CreateProblemRequest(BaseModel):
     ai_rubric: str = Field(..., min_length=1)
     reference_solution: Optional[str] = ""
     teacher_instructions: Optional[str] = ""
+    is_active: Optional[bool] = True
     order_index: Optional[int] = 0
 
 
@@ -175,4 +176,10 @@ class StudentRateLimitRequest(BaseModel):
     max_guidance_per_problem: Optional[int] = None  # backward-compat alias
     cooldown_seconds: Optional[float] = 0.0
     is_exempt: Optional[bool] = False
+
+
+class GitHubConfigRequest(BaseModel):
+    token: Optional[str] = None
+    repo: Optional[str] = None
+    branch: Optional[str] = "main"
 

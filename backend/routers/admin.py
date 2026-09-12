@@ -8,17 +8,18 @@ import json
 import psutil
 import csv
 import io
+import re
 from fastapi import APIRouter, HTTPException, Depends, Query, Response
 from fastapi.responses import FileResponse
 
 try:
-    from pymentor.backend.config import ENV_PATH
+    from pymentor.backend.config import ENV_PATH, LOG_FILE_PATH
     from pymentor.backend.models import (
         SetKeyRequest, TeacherInstructionsRequest,
         CreateProblemRequest, UpdateProblemRequest, ReorderProblemsRequest,
         CreateTopicRequest, RenameTopicRequest,
         CreateStudentRequest, UpdateStudentRequest, ResetPasswordRequest, BulkResetPasswordRequest,
-        ResetSessionRequest, RateLimitConfigRequest, StudentRateLimitRequest
+        ResetSessionRequest, RateLimitConfigRequest, StudentRateLimitRequest, GitHubConfigRequest
     )
     from pymentor.backend.deps import verify_admin
     from pymentor.backend import state
@@ -26,16 +27,17 @@ try:
     from pymentor.backend.ai_mentor import FALLBACK_MODELS, get_api_key
     from pymentor.backend.quota_manager import get_quota_summary
     from pymentor.backend.github_backup import (
-        backup_to_github, list_backups, get_latest_local_backup, sync_from_github_on_startup, is_github_configured
+        backup_to_github, list_backups, get_latest_local_backup, sync_from_github_on_startup, is_github_configured,
+        save_github_config, get_github_status_summary
     )
 except ImportError:
-    from backend.config import ENV_PATH
+    from backend.config import ENV_PATH, LOG_FILE_PATH
     from backend.models import (
         SetKeyRequest, TeacherInstructionsRequest,
         CreateProblemRequest, UpdateProblemRequest, ReorderProblemsRequest,
         CreateTopicRequest, RenameTopicRequest,
         CreateStudentRequest, UpdateStudentRequest, ResetPasswordRequest, BulkResetPasswordRequest,
-        ResetSessionRequest, RateLimitConfigRequest, StudentRateLimitRequest
+        ResetSessionRequest, RateLimitConfigRequest, StudentRateLimitRequest, GitHubConfigRequest
     )
     from backend.deps import verify_admin
     from backend import state
@@ -43,7 +45,8 @@ except ImportError:
     from backend.ai_mentor import FALLBACK_MODELS, get_api_key
     from backend.quota_manager import get_quota_summary
     from backend.github_backup import (
-        backup_to_github, list_backups, get_latest_local_backup, sync_from_github_on_startup, is_github_configured
+        backup_to_github, list_backups, get_latest_local_backup, sync_from_github_on_startup, is_github_configured,
+        save_github_config, get_github_status_summary
     )
 
 router = APIRouter(prefix="/api", tags=["admin"])
@@ -465,12 +468,13 @@ def create_problem(req: CreateProblemRequest, admin: bool = Depends(verify_admin
         cursor.execute("INSERT INTO topics (name) VALUES (?)", (req.topic.strip(),))
 
     concepts_json = json.dumps(req.concepts or [])
+    is_active_val = 1 if (req.is_active is not False) else 0
     cursor.execute("""
         INSERT INTO problems (
             topic, title, difficulty, description, sample_input, sample_output,
             concepts, starter_code, ai_rubric, reference_solution, teacher_instructions,
             is_active, order_index
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         req.topic.strip(),
         req.title.strip(),
@@ -483,6 +487,7 @@ def create_problem(req: CreateProblemRequest, admin: bool = Depends(verify_admin
         req.ai_rubric.strip(),
         (req.reference_solution or "").strip(),
         (req.teacher_instructions or "").strip(),
+        is_active_val,
         req.order_index or 0
     ))
     new_id = cursor.lastrowid
@@ -1029,6 +1034,24 @@ def force_restore_github(admin: bool = Depends(verify_admin)):
     return {"status": "success", "message": "Synchronized latest database from GitHub/Host."}
 
 
+@router.get("/admin/config/github")
+def get_github_config_endpoint(admin: bool = Depends(verify_admin)):
+    """Return current GitHub backup repository, branch, and masked token status."""
+    return get_github_status_summary()
+
+
+@router.post("/admin/config/github")
+def set_github_config_endpoint(req: GitHubConfigRequest, admin: bool = Depends(verify_admin)):
+    """Update and verify GitHub backup token, repository, or branch."""
+    try:
+        res = save_github_config(token=req.token, repo=req.repo, branch=req.branch)
+        return res
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update GitHub configuration: {e}")
+
+
 # ─────────────────────────────────────────────
 # ADMIN GROUP 4: LIVE LAB SESSION & GRADING OVERRIDES
 # ─────────────────────────────────────────────
@@ -1373,5 +1396,181 @@ def clear_student_ratelimit(student_id: int, admin: bool = Depends(verify_admin)
         "student_id": student_id,
         "message": "Student reverted to global rate limit policy."
     }
+
+
+# ─────────────────────────────────────────────
+# ADMIN GROUP 7: SECURITY AUDIT & SYSTEM LOGS
+# ─────────────────────────────────────────────
+
+@router.get("/admin/logs")
+def get_system_logs(
+    category: str = Query("important"),
+    query: str = Query(None),
+    limit: int = Query(300),
+    admin: bool = Depends(verify_admin)
+):
+    """
+    Parses and returns structured security and operational logs from logs.txt and events table.
+    Categorizes deactivated student login attempts, failed logins, successful sessions, and AI errors.
+    """
+    raw_lines = []
+    if os.path.exists(LOG_FILE_PATH):
+        try:
+            with open(LOG_FILE_PATH, "r", encoding="utf-8", errors="replace") as f:
+                raw_lines = f.readlines()
+        except Exception:
+            pass
+
+    # Query SQLite events table for recent security events to ensure database persistence
+    db_security_events = []
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT e.id, e.event_type, e.event_data, e.created_at,
+                   st.roll_no, st.name, st.section, st.is_active
+            FROM events e
+            LEFT JOIN students st ON e.student_id = st.id
+            WHERE e.event_type IN ('deactivated_login_attempt', 'login', 'logout', 'password_change')
+            ORDER BY e.id DESC LIMIT 100
+        """)
+        db_security_events = [dict(r) for r in cursor.fetchall()]
+        conn.close()
+    except Exception:
+        pass
+
+    log_pattern = re.compile(r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:,\d+)?)\s+\[(\w+)\]\s+(.*)$')
+    
+    parsed_logs = []
+    deactivated_count = 0
+    failed_login_count = 0
+    success_login_count = 0
+    eval_count = 0
+    error_count = 0
+
+    # Process file logs from newest to oldest
+    for line in reversed(raw_lines):
+        line_clean = line.strip()
+        if not line_clean:
+            continue
+        m = log_pattern.match(line_clean)
+        if m:
+            ts, lvl, msg = m.groups()
+        else:
+            ts = ""
+            lvl = "INFO"
+            msg = line_clean
+
+        is_deactivated = ("Login REJECTED (Deactivated" in msg) or ("deactivated" in msg.lower() and "reject" in msg.lower())
+        is_failed = ("Login FAILED" in msg) or ("Invalid credentials" in msg)
+        is_success = "Login SUCCESS" in msg
+        is_eval = "[EVAL]" in msg
+        is_err = lvl in ("WARNING", "ERROR", "CRITICAL")
+
+        if is_deactivated: deactivated_count += 1
+        if is_failed: failed_login_count += 1
+        if is_success: success_login_count += 1
+        if is_eval: eval_count += 1
+        if is_err: error_count += 1
+
+        # Extract roll number & section if present
+        roll_no = None
+        section = None
+        student_name = None
+        
+        roll_m = re.search(r"Roll ['\"]?(\d{5,12})['\"]?", msg)
+        if roll_m: roll_no = roll_m.group(1)
+        sec_m = re.search(r"Sec ['\"]?([A-Z0-9]+)['\"]?", msg)
+        if sec_m: section = sec_m.group(1)
+        name_m = re.search(r"Login SUCCESS: ['\"]?(.*?)['\"]? \(", msg) or re.search(r"Login REJECTED \(Deactivated\): ['\"]?(.*?)['\"]? \(", msg)
+        if name_m: student_name = name_m.group(1)
+
+        # Categorize
+        cat = "system"
+        if is_deactivated: cat = "deactivated"
+        elif is_failed or is_success or "[STUDENT AUTH]" in msg: cat = "auth"
+        elif is_eval: cat = "eval"
+        elif "[REPORT]" in msg: cat = "report"
+        elif "[STUDENT SESSION]" in msg: cat = "session"
+        elif "HTTP Request:" in msg: cat = "http"
+
+        parsed_logs.append({
+            "timestamp": ts,
+            "level": lvl,
+            "category": cat,
+            "is_deactivated": is_deactivated,
+            "is_failed_login": is_failed,
+            "is_success_login": is_success,
+            "roll_no": roll_no,
+            "section": section,
+            "student_name": student_name,
+            "message": msg
+        })
+
+    # Filter logic
+    filtered = []
+    q = query.strip().lower() if (query and isinstance(query, str)) else None
+    cat = category if isinstance(category, str) else "important"
+    lim = limit if isinstance(limit, int) else 300
+
+    for item in parsed_logs:
+        # Category filter
+        if cat == "deactivated" and not item["is_deactivated"]:
+            continue
+        elif cat == "auth" and item["category"] not in ("auth", "deactivated"):
+            continue
+        elif cat == "errors" and item["level"] not in ("WARNING", "ERROR", "CRITICAL"):
+            continue
+        elif cat == "eval" and item["category"] != "eval":
+            continue
+        elif cat == "important" and item["category"] == "http":
+            continue  # exclude noisy raw HTTP access lines
+
+        # Text search query
+        if q:
+            match_txt = f"{item['timestamp']} {item['message']} {item['roll_no'] or ''} {item['section'] or ''}".lower()
+            if q not in match_txt:
+                continue
+
+        filtered.append(item)
+        if len(filtered) >= lim:
+            break
+
+    return {
+        "total_lines": len(raw_lines),
+        "summary": {
+            "deactivated_attempts_count": deactivated_count,
+            "failed_logins_count": failed_login_count,
+            "successful_logins_count": success_login_count,
+            "eval_submissions_count": eval_count,
+            "errors_count": error_count
+        },
+        "db_security_events": db_security_events[:50],
+        "logs": filtered
+    }
+
+
+@router.get("/admin/logs/download")
+def download_system_logs(admin: bool = Depends(verify_admin)):
+    """Directly stream raw logs.txt file as a download."""
+    if not os.path.exists(LOG_FILE_PATH):
+        raise HTTPException(status_code=404, detail="No logs.txt file found on server")
+    filename = f"pymentor_logs_{time.strftime('%Y%m%d_%H%M%S')}.txt"
+    return FileResponse(
+        path=LOG_FILE_PATH,
+        filename=filename,
+        media_type="text/plain"
+    )
+
+
+@router.post("/admin/logs/clear")
+def clear_system_logs(admin: bool = Depends(verify_admin)):
+    """Safely truncate logs.txt leaving a clean rotation header."""
+    try:
+        with open(LOG_FILE_PATH, "w", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [INFO] [ADMIN] Server logs truncated and rotated by administrator.\n")
+        return {"status": "success", "message": "Server logs rotated and reset successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to clear log file: {e}")
 
 
