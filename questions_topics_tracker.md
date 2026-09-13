@@ -15,9 +15,9 @@
 | **04** | **Decision Making (if / else)** | L06 | Lab 06 | Q08–10, Q22–23, Q46–50 | 10 questions | ⏸️ **In DB** (Q8-10, 22-23 active; Q46-50 draft) |
 | **05** | **Nested Conditions** | L07 | Lab 07, 08 | Q11–13, Q24–25, Q51–55 | 10 questions | ⏸️ **In DB** (Q11-13, 24-25 active; Q51-55 draft) |
 | **06** | **Loops (for / while)** | L08 – L09 | Lab 07, 08 | Q26–30, Q56–60 | 10 questions | ⏸️ **In DB** (Q26-30 active; Q56-60 draft) |
-| **07** | **Advanced Loops & Patterns** (`break`, `continue`, nested loops) | L08 – L09 | Lab 09 | **Q61 – Q70** | *0 (Next)* | ⏳ **Pending Generation (Batch 3)** |
-| **08** | **Strings — Slicing & Iteration** (Indexing, step, traversal) | L10 | Lab 10 | **Q71 – Q80** | *0 (Next)* | ⏳ **Pending Generation (Batch 3/4)** |
-| **09** | **String Methods & Text Processing** (`split`, `join`, `strip`, `count`) | L11 – L12 | Lab 11, 12 | **Q81 – Q90** | *0 (Next)* | ⏳ **Pending Generation (Batch 4)** |
+| **07** | **Advanced Loops & Patterns** (`break`, `continue`, nested loops) | L08 – L09 | Lab 09 | **Q61 – Q70** | 10 questions | ✅ **Generated & Verified** (`pymentor_questions_61_80.json`) |
+| **08** | **Strings — Slicing & Iteration** (Indexing, step, traversal) | L10 | Lab 10 | **Q71 – Q80** | 10 questions | ✅ **Generated & Verified** (`pymentor_questions_61_80.json`) |
+| **09** | **String Methods & Text Processing** (`split`, `join`, `strip`, `count`) | L11 – L12 | Lab 11, 12 | **Q81 – Q90** | *0 (Next)* | ⏳ **Ready to Generate (Batch 4)** |
 | **10** | **Lists — Basics & Traversal** (Creation, indexing, slicing) | L13 | Lab 13 | **Q91 – Q100** | *0* | ⏳ Pending Generation (Batch 5) |
 | **11** | **List Methods & Modifications** (`append`, `extend`, `sort`, `pop`) | L14 | Lab 13 | **Q101 – Q110** | *0* | ⏳ Pending Generation (Batch 5) |
 | **12** | **Tuples & Sets** (Immutability, uniqueness, set operations) | L15 | Lab 14 | **Q111 – Q120** | *0* | ⏳ Pending Generation (Batch 6) |
