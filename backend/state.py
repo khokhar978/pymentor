@@ -27,3 +27,7 @@ guidance_rate_limit_config = {
 
 # In-memory store of individual student overrides: student_id -> dict
 student_rate_limit_overrides = {}
+
+# Ephemeral, single-use download tokens for log streaming: token: str -> expiry_timestamp: float
+log_download_tokens = {}
+

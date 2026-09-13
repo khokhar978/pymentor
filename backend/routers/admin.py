@@ -9,11 +9,13 @@ import psutil
 import csv
 import io
 import re
-from fastapi import APIRouter, HTTPException, Depends, Query, Response
+import secrets
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Depends, Query, Response, Request
 from fastapi.responses import FileResponse
 
 try:
-    from pymentor.backend.config import ENV_PATH, LOG_FILE_PATH
+    from pymentor.backend.config import ENV_PATH, LOG_FILE_PATH, ADMIN_SECRET
     from pymentor.backend.models import (
         SetKeyRequest, TeacherInstructionsRequest,
         CreateProblemRequest, UpdateProblemRequest, ReorderProblemsRequest,
@@ -31,7 +33,7 @@ try:
         save_github_config, get_github_status_summary
     )
 except ImportError:
-    from backend.config import ENV_PATH, LOG_FILE_PATH
+    from backend.config import ENV_PATH, LOG_FILE_PATH, ADMIN_SECRET
     from backend.models import (
         SetKeyRequest, TeacherInstructionsRequest,
         CreateProblemRequest, UpdateProblemRequest, ReorderProblemsRequest,
@@ -1550,9 +1552,46 @@ def get_system_logs(
     }
 
 
+@router.post("/admin/logs/download-token")
+def create_log_download_token(admin: bool = Depends(verify_admin)):
+    """Mints a short-lived (60s), single-use token for downloading logs."""
+    token = secrets.token_urlsafe(32)
+    now = time.time()
+
+    # Opportunistic cleanup of expired download tokens
+    if len(state.log_download_tokens) > 20:
+        for t in list(state.log_download_tokens.keys()):
+            if state.log_download_tokens[t] <= now:
+                del state.log_download_tokens[t]
+
+    state.log_download_tokens[token] = now + 60.0
+    return {"token": token, "expires_in": 60}
+
+
 @router.get("/admin/logs/download")
-def download_system_logs(admin: bool = Depends(verify_admin)):
-    """Directly stream raw logs.txt file as a download."""
+def download_system_logs(request: Request, token: Optional[str] = Query(None)):
+    """Directly stream raw logs.txt file as a download via single-use token or X-Admin-Secret header."""
+    now = time.time()
+    valid_auth = False
+
+    # 1. Single-use download token validation (burn on use)
+    if token and token in state.log_download_tokens:
+        expiry = state.log_download_tokens.pop(token)
+        if now <= expiry:
+            valid_auth = True
+
+    # 2. Header fallback for programmatic API / cURL downloads
+    if not valid_auth:
+        secret = (request.headers.get("X-Admin-Secret") or "").strip()
+        if secret and secrets.compare_digest(secret, ADMIN_SECRET):
+            valid_auth = True
+
+    if not valid_auth:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid, expired, or missing download authorization"
+        )
+
     if not os.path.exists(LOG_FILE_PATH):
         raise HTTPException(status_code=404, detail="No logs.txt file found on server")
     filename = f"pymentor_logs_{time.strftime('%Y%m%d_%H%M%S')}.txt"

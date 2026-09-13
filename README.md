@@ -53,6 +53,27 @@ A lightweight, secure, and interactive Python practice and learning platform bui
 - **Frontend:** HTML5, Modern Vanilla CSS, Vanilla JavaScript, Monaco Editor, Pyodide (WASM), DOMPurify, Marked.js.
 - **AI Engine:** Google GenAI SDK (`google-genai`) with fallback quotas across Gemini Flash/Lite models.
 
+### Directory Structure
+
+```text
+pymentor/
+├── backend/            # FastAPI application (routers, database, quota manager, telemetry)
+├── frontend/           # Static web assets (HTML pages, CSS design system, client JS)
+├── docs/               # Documentation & design specifications
+│   ├── architecture/   # System roadmaps, fine-tuning plans, and security audits
+│   └── curriculum/     # Topic progression trackers and AI prompt engineering guides
+├── data/               # Project data (gitignored / local store)
+│   ├── questions/      # Canonical master question datasets & historical batch archives
+│   ├── roster/         # Student attendance rosters and enrollment sheets
+│   └── reports/        # Interaction exports (CSV/JSON) and student engagement spreadsheets
+├── scripts/            # Operational, migration, and maintenance utilities
+├── tests/              # Comprehensive automated smoke test suite
+├── backups/            # Automated rolling SQLite database backups
+├── pymentor.db         # Active production SQLite database
+├── run.py              # Server entrypoint with preflight checks
+└── requirements.txt    # Production dependencies
+```
+
 ---
 
 ## Security Architecture

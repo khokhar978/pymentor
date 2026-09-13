@@ -807,6 +807,48 @@ def test_learning_reports_and_quota_manager():
         cleanup_test_student('9992')
 
 
+def test_admin_log_download_token_security():
+    """Verifies that query-parameter admin auth is blocked and single-use download tokens work as designed."""
+    # 1. Verify query parameter ?secret= is REJECTED across standard admin endpoints
+    res_dash_query = client.get(f"/api/admin/dashboard?secret={ADMIN_SECRET}")
+    assert res_dash_query.status_code == 401, f"Expected 401, got {res_dash_query.status_code}"
+    print("  [OK] GET /api/admin/dashboard?secret=... is strictly rejected (HTTP 401)")
+
+    # 2. Verify query parameter ?secret= is REJECTED on log download
+    res_dl_query = client.get(f"/api/admin/logs/download?secret={ADMIN_SECRET}")
+    assert res_dl_query.status_code == 401, f"Expected 401, got {res_dl_query.status_code}"
+    print("  [OK] GET /api/admin/logs/download?secret=... is strictly rejected (HTTP 401)")
+
+    # 3. Verify unauthenticated token minting is REJECTED
+    res_mint_unauth = client.post("/api/admin/logs/download-token")
+    assert res_mint_unauth.status_code == 401, f"Expected 401, got {res_mint_unauth.status_code}"
+    print("  [OK] Unauthenticated POST /api/admin/logs/download-token rejected (HTTP 401)")
+
+    # 4. Verify authenticated token minting SUCCEEDS
+    res_mint = client.post("/api/admin/logs/download-token", headers={"X-Admin-Secret": ADMIN_SECRET})
+    assert res_mint.status_code == 200, f"Expected 200, got {res_mint.status_code}"
+    data = res_mint.json()
+    assert "token" in data and "expires_in" in data
+    token = data["token"]
+    assert token in state.log_download_tokens
+    print("  [OK] Single-use token minted successfully (HTTP 200, 60s TTL)")
+
+    # 5. Verify single-use token allows log streaming
+    res_dl = client.get(f"/api/admin/logs/download?token={token}")
+    assert res_dl.status_code == 200, f"Expected 200, got {res_dl.status_code}"
+    print("  [OK] Valid single-use token successfully downloads log stream (HTTP 200)")
+
+    # 6. Verify token is burned on first access (single-use replay prevention)
+    res_dl_replay = client.get(f"/api/admin/logs/download?token={token}")
+    assert res_dl_replay.status_code == 401, f"Expected 401 on replay, got {res_dl_replay.status_code}"
+    print("  [OK] Replay with consumed token is rejected (HTTP 401, single-use burn confirmed)")
+
+    # 7. Verify direct header authentication still works for programmatic cURL
+    res_dl_header = client.get("/api/admin/logs/download", headers={"X-Admin-Secret": ADMIN_SECRET})
+    assert res_dl_header.status_code == 200, f"Expected 200, got {res_dl_header.status_code}"
+    print("  [OK] Direct X-Admin-Secret header download supported for scripts/cURL (HTTP 200)")
+
+
 # ─────────────────────────────────────────────────────────────
 # MAIN TEST RUNNER
 # ─────────────────────────────────────────────────────────────
@@ -816,45 +858,48 @@ def run_all_smoke_tests():
     print("=" * 65)
     start_time = time.time()
 
-    print("\n[Suite 1/12: Static Routing & Modules]")
+    print("\n[Suite 1/13: Static Routing & Modules]")
     test_pages_and_static_routes()
 
-    print("\n[Suite 2/12: Security & Browser Isolation]")
+    print("\n[Suite 2/13: Security & Browser Isolation]")
     test_coop_coep_and_security_headers()
 
-    print("\n[Suite 3/12: Student Authentication & Failures]")
+    print("\n[Suite 3/13: Student Authentication & Failures]")
     test_login_failure_no_500()
 
-    print("\n[Suite 4/12: Password Change & Security Gating]")
+    print("\n[Suite 4/13: Password Change & Security Gating]")
     test_password_change_and_security_gating()
 
-    print("\n[Suite 5/12: Curriculum & Problem Content]")
+    print("\n[Suite 5/13: Curriculum & Problem Content]")
     test_curriculum_and_content_endpoints()
 
-    print("\n[Suite 6/12: Practice Session Lifecycle]")
+    print("\n[Suite 6/13: Practice Session Lifecycle]")
     test_student_full_journey()
 
-    print("\n[Suite 7/12: Progress & Profile Analytics]")
+    print("\n[Suite 7/13: Progress & Profile Analytics]")
     test_progress_and_profile_endpoints()
 
-    print("\n[Suite 8/12: Admin Operations & Telemetry Inspection]")
+    print("\n[Suite 8/13: Admin Operations & Telemetry Inspection]")
     test_admin_dashboard_and_telemetry_inspection()
 
-    print("\n[Suite 9/12: AI Code Submission & Cooldown]")
+    print("\n[Suite 9/13: AI Code Submission & Cooldown]")
     test_code_submit_and_cooldown()
 
-    print("\n[Suite 10/12: Cross-Student Session IDOR Protection]")
+    print("\n[Suite 10/13: Cross-Student Session IDOR Protection]")
     test_cross_student_idor()
 
-    print("\n[Suite 11/12: Admin Brute-Force Lockout]")
+    print("\n[Suite 11/13: Admin Brute-Force Lockout]")
     test_admin_lockout_and_rate_limiting()
 
-    print("\n[Suite 12/12: Learning Report & Quota Manager Integration]")
+    print("\n[Suite 12/13: Learning Report & Quota Manager Integration]")
     test_learning_reports_and_quota_manager()
+
+    print("\n[Suite 13/13: Admin Log Download Security & Token Minting]")
+    test_admin_log_download_token_security()
 
     duration = round(time.time() - start_time, 2)
     print("\n" + "=" * 65)
-    print(f"  ALL 12 SMOKE TEST SUITES PASSED SUCCESSFULLY in {duration}s! ")
+    print(f"  ALL 13 SMOKE TEST SUITES PASSED SUCCESSFULLY in {duration}s! ")
     print("=" * 65)
 
 if __name__ == "__main__":

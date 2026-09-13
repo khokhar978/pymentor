@@ -1159,18 +1159,54 @@ document.addEventListener('DOMContentLoaded', () => {
     // ──────────────────────────────────────────────
     // VIEW 6: EXPORTS & BACKUPS CONTROLLER
     // ──────────────────────────────────────────────
+    async function triggerAuthenticatedDownload(url, defaultFilename) {
+        if (!state.secret) {
+            showToast('Admin authorization missing', 'error');
+            return;
+        }
+        try {
+            const res = await fetch(url, {
+                headers: { 'X-Admin-Secret': state.secret }
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                showToast(err.detail || 'Download failed', 'error');
+                return;
+            }
+            let filename = defaultFilename;
+            const disp = res.headers.get('Content-Disposition');
+            if (disp && disp.includes('filename=')) {
+                const match = disp.match(/filename="?([^";]+)"?/);
+                if (match) filename = match[1];
+            }
+            const blob = await res.blob();
+            const blobUrl = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = blobUrl;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => window.URL.revokeObjectURL(blobUrl), 1000);
+            showToast('Download started');
+        } catch (err) {
+            console.error('Download error:', err);
+            showToast('Network error downloading file', 'error');
+        }
+    }
+
     document.getElementById('btnDownloadGradesCsv').addEventListener('click', () => {
         const sec = document.getElementById('exportSectionSelect').value;
         const query = sec ? `?section=${encodeURIComponent(sec)}` : '';
-        window.open(`/api/admin/export/grades.csv${query}`, '_blank');
+        triggerAuthenticatedDownload(`/api/admin/export/grades.csv${query}`, 'pymentor_grades.csv');
     });
 
     document.getElementById('btnDownloadSubmissionsCsv').addEventListener('click', () => {
-        window.open('/api/admin/export/submissions.csv', '_blank');
+        triggerAuthenticatedDownload('/api/admin/export/submissions.csv', 'pymentor_submissions.csv');
     });
 
     document.getElementById('btnDownloadDbBackup').addEventListener('click', () => {
-        window.open('/api/admin/backup/download', '_blank');
+        triggerAuthenticatedDownload('/api/admin/backup/download', 'pymentor_backup.db');
     });
 
     async function loadBackupsView() {
@@ -1531,9 +1567,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const timeLabel = document.getElementById('logsTimestampLabel');
         const dlBtn = document.getElementById('btnDownloadLogs');
 
-        if (dlBtn) {
-            dlBtn.href = `/api/admin/logs/download?secret=${encodeURIComponent(state.secret)}`;
-        }
+
 
         if (!isBackground && container) {
             container.innerHTML = `<div style="color: #64748b; padding: 2rem; text-align: center;">Fetching server logs and telemetry events...</div>`;
@@ -1740,9 +1774,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const btnDownloadLogs = document.getElementById('btnDownloadLogs');
         if (btnDownloadLogs) {
-            btnDownloadLogs.addEventListener('click', () => {
-                if (state.secret) {
-                    btnDownloadLogs.href = `/api/admin/logs/download?secret=${encodeURIComponent(state.secret)}`;
+            btnDownloadLogs.addEventListener('click', async (e) => {
+                e.preventDefault();
+                if (!state.secret) {
+                    showToast('Admin authorization missing', 'error');
+                    return;
+                }
+                try {
+                    const res = await fetch('/api/admin/logs/download-token', {
+                        method: 'POST',
+                        headers: { 'X-Admin-Secret': state.secret }
+                    });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        showToast(err.detail || 'Failed to authorize log download', 'error');
+                        return;
+                    }
+                    const data = await res.json();
+                    if (data && data.token) {
+                        // Download via ephemeral single-use token: master secret is never exposed in URL/history
+                        window.location.href = `/api/admin/logs/download?token=${encodeURIComponent(data.token)}`;
+                    }
+                } catch (err) {
+                    console.error('Log download authorization error:', err);
+                    showToast('Error requesting log download', 'error');
                 }
             });
         }

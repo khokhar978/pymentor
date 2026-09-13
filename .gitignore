@@ -1,22 +1,48 @@
-__pycache__
+# Environment & Secrets
 .env
-reset_users.py
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+
+# Database & Backups
 pymentor.db
 *.db
 *.db-wal
 *.db-shm
-logs.txt
-*.log
-chat_logs_export.*
-*.xlsx
-New Text Document.txt
-questions_data_for_claude.*
-questions_refactor_prompt_for_claude.*
-backups/
 *.bak
 *.pre_*_backup
+backups/
+
+# Runtime Logs & Audits
+logs.txt
+
+# Binaries & Executables
+*.exe
+cloudflared.exe
+
+# Local Data, Question Dumps & Rosters (Not for deployment)
+data/
+*.xlsx
+chat_logs_export.*
 pymentor_questions_*.json
+questions_data_for_claude.*
+questions_refactor_prompt_for_claude.*
+
+# Operational, Analysis & Maintenance Scripts (Not for deployment)
+scripts/
+utils/
+reset_users.py
 test_live*.py
 check_live_*.py
 fix_live_*.py
 live_sync_*.py
+
+# Agent / IDE Configuration
+.agents/
+.vscode/
+.idea/
