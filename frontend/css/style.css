@@ -214,6 +214,8 @@ select, input, textarea { font-family: inherit; }
     border-radius: 10px;
     background: var(--accent-light);
     color: var(--accent);
+}
+
 .streak-badge {
     display: inline-flex;
     align-items: center;
