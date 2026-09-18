@@ -10,15 +10,13 @@ import time
 import threading
 import logging
 from typing import Optional
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query, Request
 
 try:
     from pymentor.backend.database import get_connection
-    from pymentor.backend.deps import require_password_changed
     from pymentor.backend.streak import compute_all_students_current_streaks
 except ImportError:
     from backend.database import get_connection
-    from backend.deps import require_password_changed
     from backend.streak import compute_all_students_current_streaks
 
 logger = logging.getLogger("pymentor")
@@ -26,13 +24,36 @@ logger = logging.getLogger("pymentor")
 router = APIRouter(prefix="/api", tags=["leaderboard"])
 
 # ── In-Memory Leaderboard Cache ──
-_cache_lock = threading.Lock()
+_cache_lock = threading.RLock()
 _CACHE_TTL = 300  # 5 minutes
 _cache = {
     "global": None,
     "sections": {},
     "updated_at": 0.0
 }
+
+
+def get_optional_student(request: Request) -> Optional[int]:
+    """Extracts student_id from Bearer token if present and valid, otherwise returns None."""
+    auth = request.headers.get("Authorization")
+    if not auth or not auth.startswith("Bearer "):
+        return None
+    parts = auth.split(" ")
+    if len(parts) != 2:
+        return None
+    token = parts[1]
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT student_id FROM auth_tokens WHERE token = ? AND (expires_at IS NULL OR expires_at > datetime('now', 'localtime'))",
+            (token,)
+        )
+        row = cursor.fetchone()
+        conn.close()
+        return row["student_id"] if row else None
+    except Exception:
+        return None
 
 
 def refresh_leaderboard_cache():
@@ -111,22 +132,27 @@ def get_cached_leaderboard():
 
 @router.get("/leaderboard")
 def get_leaderboard(
-    section: Optional[str] = Query(None, description="Section code (e.g. 'A') or empty for global"),
-    student_id: int = Depends(require_password_changed)
+    request: Request,
+    section: Optional[str] = Query(None, description="Section code (e.g. 'A') or empty for global")
 ):
     """
     Returns the Top 10 rankings and the requesting student's private rank.
     Can be filtered by section using ?section=X.
+    Works for both authenticated students (adds private rank) and visitors.
     """
     cache = get_cached_leaderboard()
+    student_id = get_optional_student(request)
 
-    # Determine student's own section
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT section FROM students WHERE id = ?", (student_id,))
-    st_row = cursor.fetchone()
-    conn.close()
-    student_section = (st_row["section"] or "").strip().upper() if st_row else ""
+    # Determine student's own section if authenticated
+    student_section = ""
+    if student_id:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT section FROM students WHERE id = ?", (student_id,))
+        st_row = cursor.fetchone()
+        conn.close()
+        if st_row and st_row["section"]:
+            student_section = st_row["section"].strip().upper()
 
     target_sec = section.strip().upper() if section and section.strip().upper() != "ALL" else None
 
@@ -137,21 +163,22 @@ def get_leaderboard(
         board = cache["global"] or []
         scope = "ALL"
 
-    # Find requesting student's rank within this board
+    # Find requesting student's rank within this board (if authenticated)
     my_rank_info = None
-    for item in board:
-        if item["id"] == student_id:
-            my_rank_info = {
-                "rank": item["rank"],
-                "solved_count": item["solved_count"],
-                "total_time_seconds": item["total_time_seconds"],
-                "streak": item.get("streak", 0),
-                "total_students": len(board),
-                "in_top_10": (item["rank"] <= 10)
-            }
-            break
+    if student_id:
+        for item in board:
+            if item["id"] == student_id:
+                my_rank_info = {
+                    "rank": item["rank"],
+                    "solved_count": item["solved_count"],
+                    "total_time_seconds": item["total_time_seconds"],
+                    "streak": item.get("streak", 0),
+                    "total_students": len(board),
+                    "in_top_10": (item["rank"] <= 10)
+                }
+                break
 
-    # Format top 10 (or only students who solved >= 1 if desired, but we return top 10)
+    # Format top 10 (or only students who solved >= 1 if desired)
     # We strip private student ID from each top 10 row and flag `is_me`
     top_10 = []
     for item in board[:10]:
@@ -163,7 +190,7 @@ def get_leaderboard(
             "solved_count": item["solved_count"],
             "total_time_seconds": item["total_time_seconds"],
             "streak": item.get("streak", 0),
-            "is_me": (item["id"] == student_id)
+            "is_me": (item["id"] == student_id) if student_id else False
         })
 
     return {

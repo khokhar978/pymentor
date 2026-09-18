@@ -374,13 +374,7 @@ async function loadLeaderboard(scope = currentLeaderboardScope) {
     const footerEl = document.getElementById('myRankFooter');
     if (!listEl) return;
 
-    if (!student || !student.token) {
-        listEl.innerHTML = '<div class="lb-empty">Log in to view rankings</div>';
-        if (footerEl) footerEl.innerHTML = '';
-        return;
-    }
-
-    const sectionParam = scope === 'SEC' ? (cachedStudentSection || student.section || '') : '';
+    const sectionParam = scope === 'SEC' ? (cachedStudentSection || (student ? student.section : '') || '') : '';
     const query = sectionParam ? `?section=${encodeURIComponent(sectionParam)}` : '';
 
     try {
@@ -445,20 +439,25 @@ function renderLeaderboard(data) {
     }).join('');
 
     // Private student rank footer
-    if (footerEl && data.my_rank) {
-        const mr = data.my_rank;
-        const total = mr.total_students || data.total_active_students || 0;
-        const scopeLabel = data.scope === 'ALL' ? 'Overall' : `Sec ${data.scope}`;
-        if (mr.rank) {
-            footerEl.innerHTML = `
-                <span>Your Rank (${scopeLabel}):</span>
-                <span class="lb-my-rank-badge">#${mr.rank} of ${total} <small style="color:var(--text-faint);margin-left:4px;">(${mr.solved_count} solved)</small></span>
-            `;
-        } else {
-            footerEl.innerHTML = `
-                <span>Your Rank (${scopeLabel}):</span>
-                <span class="lb-my-rank-badge">Unranked</span>
-            `;
+    if (footerEl) {
+        const student = getCurrentStudent();
+        if (!student || !student.token) {
+            footerEl.innerHTML = `<span><a href="/login" style="color:var(--accent);font-weight:600;text-decoration:none;">Log in</a> to see your rank</span>`;
+        } else if (data.my_rank) {
+            const mr = data.my_rank;
+            const total = mr.total_students || data.total_active_students || 0;
+            const scopeLabel = data.scope === 'ALL' ? 'Overall' : `Sec ${data.scope}`;
+            if (mr.rank) {
+                footerEl.innerHTML = `
+                    <span>Your Rank (${scopeLabel}):</span>
+                    <span class="lb-my-rank-badge">#${mr.rank} of ${total} <small style="color:var(--text-faint);margin-left:4px;">(${mr.solved_count} solved)</small></span>
+                `;
+            } else {
+                footerEl.innerHTML = `
+                    <span>Your Rank (${scopeLabel}):</span>
+                    <span class="lb-my-rank-badge">Unranked</span>
+                `;
+            }
         }
     }
 }
