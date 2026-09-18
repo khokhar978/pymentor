@@ -5,16 +5,23 @@
  */
 
 import { getCurrentStudent } from './shared/auth.js';
+import { apiFetch } from './shared/api.js';
 import { formatDuration, escapeHtml as esc } from './shared/utils.js';
+import { initNavbarStreak } from './shared/streak.js';
 
 let progressMap = {};       // { [problem_id]: { status, time_spent_seconds } }
 let allTopicsData = [];     // Array of topic objects
 let areAllExpanded = false; // Toggle all state
+let currentLeaderboardScope = 'ALL'; // 'ALL' or 'SEC'
+let cachedStudentSection = '';
 
 document.addEventListener('DOMContentLoaded', () => {
     setupStudentUI();
     setupToggleAll();
+    setupLeaderboardTabs();
     loadAll();
+    loadLeaderboard();
+    initNavbarStreak();
 });
 
 // Re-fetch progress when returning to the problems dashboard via browser back/forward cache (bfcache)
@@ -22,6 +29,8 @@ window.addEventListener('pageshow', (event) => {
     if (event.persisted) {
         setupStudentUI();
         loadAll();
+        loadLeaderboard();
+        initNavbarStreak();
     }
 });
 
@@ -333,5 +342,123 @@ function getProblemStatusMeta(status) {
                 btnLabel: 'Start Practice →',
                 btnCls: ''
             };
+    }
+}
+
+// ── LEADERBOARD SUBSYSTEM ──────────────────────────
+function setupLeaderboardTabs() {
+    const tabGlobal = document.getElementById('lbTabGlobal');
+    const tabSection = document.getElementById('lbTabSection');
+
+    if (tabGlobal && tabSection) {
+        tabGlobal.addEventListener('click', () => {
+            if (currentLeaderboardScope === 'ALL') return;
+            tabGlobal.classList.add('active');
+            tabSection.classList.remove('active');
+            loadLeaderboard('ALL');
+        });
+
+        tabSection.addEventListener('click', () => {
+            if (currentLeaderboardScope === 'SEC') return;
+            tabSection.classList.add('active');
+            tabGlobal.classList.remove('active');
+            loadLeaderboard('SEC');
+        });
+    }
+}
+
+async function loadLeaderboard(scope = currentLeaderboardScope) {
+    currentLeaderboardScope = scope;
+    const student = getCurrentStudent();
+    const listEl = document.getElementById('leaderboardList');
+    const footerEl = document.getElementById('myRankFooter');
+    if (!listEl) return;
+
+    if (!student || !student.token) {
+        listEl.innerHTML = '<div class="lb-empty">Log in to view rankings</div>';
+        if (footerEl) footerEl.innerHTML = '';
+        return;
+    }
+
+    const sectionParam = scope === 'SEC' ? (cachedStudentSection || student.section || '') : '';
+    const query = sectionParam ? `?section=${encodeURIComponent(sectionParam)}` : '';
+
+    try {
+        const res = await apiFetch(`/api/leaderboard${query}`);
+        if (!res.ok) {
+            listEl.innerHTML = '<div class="lb-empty">Rankings currently unavailable</div>';
+            return;
+        }
+        const data = await res.json();
+        if (data.student_section) {
+            cachedStudentSection = data.student_section;
+            const tabSection = document.getElementById('lbTabSection');
+            if (tabSection) {
+                tabSection.textContent = `Sec ${data.student_section}`;
+            }
+        }
+
+        renderLeaderboard(data);
+    } catch (e) {
+        listEl.innerHTML = '<div class="lb-empty">Failed to load rankings</div>';
+    }
+}
+
+function renderLeaderboard(data) {
+    const listEl = document.getElementById('leaderboardList');
+    const footerEl = document.getElementById('myRankFooter');
+    if (!listEl) return;
+
+    const top10 = data.top_10 || [];
+    if (top10.length === 0) {
+        listEl.innerHTML = '<div class="lb-empty">No solvers yet in this view. Be the first!</div>';
+        if (footerEl) footerEl.innerHTML = '';
+        return;
+    }
+
+    listEl.innerHTML = top10.map(item => {
+        let rankBadge = `${item.rank}`;
+        let rankCls = '';
+        if (item.rank === 1) { rankBadge = '🥇'; rankCls = 'gold'; }
+        else if (item.rank === 2) { rankBadge = '🥈'; rankCls = 'silver'; }
+        else if (item.rank === 3) { rankBadge = '🥉'; rankCls = 'bronze'; }
+
+        const isMeCls = item.is_me ? 'is-me' : '';
+        const displayName = esc(item.name);
+        const secText = item.section ? `Sec ${esc(item.section)}` : '';
+        const timeText = item.total_time_seconds > 0 ? formatDuration(item.total_time_seconds) : '';
+        const streakHtml = item.streak > 0 ? `<span class="lb-streak-pill" title="${item.streak}-day solve streak!">🔥 ${item.streak}</span>` : '';
+
+        return `
+            <div class="lb-row ${isMeCls}">
+                <div class="lb-rank ${rankCls}">${rankBadge}</div>
+                <div class="lb-name-group">
+                    <span class="lb-name" title="${displayName}">${displayName}</span>
+                    <span class="lb-meta">${secText} ${streakHtml}</span>
+                </div>
+                <div class="lb-score">
+                    <span class="lb-solved-count">${item.solved_count}</span>
+                    <div class="lb-time">${timeText}</div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    // Private student rank footer
+    if (footerEl && data.my_rank) {
+        const mr = data.my_rank;
+        const total = mr.total_students || data.total_active_students || 0;
+        const scopeLabel = data.scope === 'ALL' ? 'Overall' : `Sec ${data.scope}`;
+        if (mr.rank) {
+            footerEl.innerHTML = `
+                <span>Your Rank (${scopeLabel}):</span>
+                <span class="lb-my-rank-badge">#${mr.rank} of ${total} <small style="color:var(--text-faint);margin-left:4px;">(${mr.solved_count} solved)</small></span>
+            `;
+        } else {
+            footerEl.innerHTML = `
+                <span>Your Rank (${scopeLabel}):</span>
+                <span class="lb-my-rank-badge">Unranked</span>
+            `;
+        }
     }
 }

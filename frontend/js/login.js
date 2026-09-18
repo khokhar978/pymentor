@@ -98,7 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function redirectAfterLogin(targetUrl) {
-        if (targetUrl && targetUrl.startsWith('/')) {
+        if (targetUrl && targetUrl.startsWith('/') && !targetUrl.startsWith('//')) {
             window.location.href = targetUrl;
         } else {
             window.location.href = '/problems';

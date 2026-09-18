@@ -201,6 +201,7 @@ def init_db():
         attempt_number INTEGER DEFAULT 1,
         model_used TEXT DEFAULT '',
         simulated_output TEXT DEFAULT '',
+        help_level INTEGER DEFAULT 1,
         created_at TIMESTAMP DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (session_id) REFERENCES sessions(id)
     );
@@ -209,6 +210,12 @@ def init_db():
     # Ensure simulated_output exists in existing submissions table
     try:
         cursor.execute("ALTER TABLE submissions ADD COLUMN simulated_output TEXT DEFAULT ''")
+    except Exception:
+        pass
+
+    # Ensure help_level exists in existing submissions table
+    try:
+        cursor.execute("ALTER TABLE submissions ADD COLUMN help_level INTEGER DEFAULT 1")
     except Exception:
         pass
 

@@ -52,8 +52,31 @@
             </div>
         </div>
 
-        <div id="topicsContainer">
-            <p style="color: var(--text-faint); font-size: 13px;">Loading problems...</p>
+        <div class="problems-layout">
+            <main class="problems-main">
+                <div id="topicsContainer">
+                    <p style="color: var(--text-faint); font-size: 13px;">Loading problems...</p>
+                </div>
+            </main>
+
+            <aside class="leaderboard-sidebar" id="leaderboardSidebar" aria-label="Class Leaderboard">
+                <div class="leaderboard-card">
+                    <div class="lb-header">
+                        <div class="lb-title-group">
+                            <span class="lb-trophy">🏆</span>
+                            <h2 class="lb-title">Top Solvers</h2>
+                        </div>
+                        <div class="lb-toggle-group">
+                            <button id="lbTabGlobal" class="lb-tab-btn active" type="button">All</button>
+                            <button id="lbTabSection" class="lb-tab-btn" type="button">Section</button>
+                        </div>
+                    </div>
+                    <div class="lb-body" id="leaderboardList">
+                        <div class="lb-loading">Loading rankings...</div>
+                    </div>
+                    <div class="lb-footer" id="myRankFooter"></div>
+                </div>
+            </aside>
         </div>
     </div>
 

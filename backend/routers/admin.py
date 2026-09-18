@@ -978,10 +978,19 @@ def delete_student(student_id: int, hard: bool = Query(False), admin: bool = Dep
         raise HTTPException(status_code=404, detail=f"Student ID {student_id} not found")
 
     if hard:
+        cursor.execute("DELETE FROM student_rate_limits WHERE student_id = ?", (student_id,))
+        cursor.execute("DELETE FROM learning_reports WHERE student_id = ?", (student_id,))
+        cursor.execute("DELETE FROM events WHERE student_id = ?", (student_id,))
+        cursor.execute("DELETE FROM submissions WHERE session_id IN (SELECT id FROM sessions WHERE student_id = ?)", (student_id,))
+        cursor.execute("DELETE FROM sessions WHERE student_id = ?", (student_id,))
         cursor.execute("DELETE FROM auth_tokens WHERE student_id = ?", (student_id,))
         cursor.execute("DELETE FROM students WHERE id = ?", (student_id,))
         conn.commit()
         conn.close()
+        try:
+            state.student_rate_limit_overrides.pop(student_id, None)
+        except Exception:
+            pass
         return {"status": "permanently_deleted", "id": student_id, "roll_no": student["roll_no"]}
     else:
         cursor.execute("UPDATE students SET is_active = 0 WHERE id = ?", (student_id,))

@@ -109,11 +109,11 @@
 
             <!-- Toolbar -->
             <div class="editor-footer">
-                <select id="levelSelect" class="level-select" title="Guidance Level">
-                    <option value="1">&#x1F7E2; Baby Steps</option>
-                    <option value="2">&#x1F7E1; Guided</option>
-                    <option value="3">&#x1F534; Challenge</option>
-                </select>
+                <div id="hintLevelIndicator" class="hint-level-badge" title="Scaffolded guidance level automatically adapted to your progress">
+                    <span id="hintLevelIcon">&#x1F7E2;</span>
+                    <span id="hintLevelLabel" class="hint-level-name">Baby Steps</span>
+                    <span id="hintLevelProgress" class="hint-progress-tag">1/3</span>
+                </div>
                 <div class="footer-spacer"></div>
                 <span class="attempt-badge" id="attemptBadge">Attempt #1</span>
                 <button id="runBtn" class="btn-run">

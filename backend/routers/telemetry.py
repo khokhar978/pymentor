@@ -8,10 +8,12 @@ try:
     from pymentor.backend.database import get_connection, log_event
     from pymentor.backend.deps import get_current_student
     from pymentor.backend.models import TelemetryEventRequest, UpdateSettingsRequest
+    from pymentor.backend.streak import compute_student_streak
 except ImportError:
     from backend.database import get_connection, log_event
     from backend.deps import get_current_student
     from backend.models import TelemetryEventRequest, UpdateSettingsRequest
+    from backend.streak import compute_student_streak
 
 router = APIRouter(prefix="/api", tags=["telemetry"])
 
@@ -101,6 +103,9 @@ def get_profile(response: Response, student_id: int = Depends(get_current_studen
     student_dict = dict(student)
     student_dict["default_help_level"] = student_dict.get("default_help_level") or 1
 
+    # Compute live solving streak
+    streak_data = compute_student_streak(student_id)
+
     return {
         "student": student_dict,
         "stats": {
@@ -108,9 +113,16 @@ def get_profile(response: Response, student_id: int = Depends(get_current_studen
             "total_attempts": total_attempts,
             "total_sessions": total_sessions
         },
+        "streak": streak_data,
         "topic_mastery": topic_mastery,
         "activity_history": activity_history
     }
+
+
+@router.get("/student/streak")
+def get_student_streak(student_id: int = Depends(get_current_student)):
+    """Returns the student's active and longest consecutive solve streaks."""
+    return compute_student_streak(student_id)
 
 
 @router.post("/student/settings")

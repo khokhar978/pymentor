@@ -5,10 +5,13 @@
 
 import { requireAuth, clearAuth } from './shared/auth.js';
 import { escapeHtml as esc, formatLocalDateTime } from './shared/utils.js';
+import { initNavbarStreak, updateNavbarStreakBadge } from './shared/streak.js';
 
 document.addEventListener('DOMContentLoaded', () => {
     const student = requireAuth('/login');
     if (!student) return;
+
+    initNavbarStreak();
 
     // Set Header UI
     document.getElementById('navNameDisplay').textContent = student.name;
@@ -115,6 +118,10 @@ async function fetchProfileData(token) {
 
         const data = await res.json();
         renderStats(data);
+        if (data.streak) {
+            renderStreakCard(data.streak);
+            updateNavbarStreakBadge(data.streak);
+        }
         renderTopicMastery(data.topic_mastery);
         renderActivity(data.activity_history);
 
@@ -127,6 +134,34 @@ async function fetchProfileData(token) {
     } finally {
         const overlay = document.getElementById('loadingOverlay');
         if (overlay) overlay.style.display = 'none';
+    }
+}
+
+function renderStreakCard(streak) {
+    if (!streak) return;
+    const count = streak.current_streak || 0;
+    const best = streak.longest_streak || 0;
+    const titleEl = document.getElementById('streakCardTitle');
+    const subEl = document.getElementById('streakCardSubtitle');
+    const curValEl = document.getElementById('streakCurrentVal');
+    const longValEl = document.getElementById('streakLongestVal');
+    const flameEl = document.getElementById('streakCardFlame');
+
+    if (curValEl) curValEl.textContent = `${count} ${count === 1 ? 'Day' : 'Days'}`;
+    if (longValEl) longValEl.textContent = `${best} ${best === 1 ? 'Day' : 'Days'}`;
+
+    if (count > 0) {
+        if (flameEl) flameEl.textContent = '🔥';
+        if (titleEl) titleEl.textContent = `${count}-Day Practice Streak`;
+        if (subEl) {
+            subEl.textContent = streak.solved_today
+                ? 'Great job! You have solved a problem today.'
+                : 'Solve a problem today to keep your streak alive!';
+        }
+    } else {
+        if (flameEl) flameEl.textContent = '❄️';
+        if (titleEl) titleEl.textContent = 'No Active Streak';
+        if (subEl) subEl.textContent = 'Solve any problem today to start a new streak!';
     }
 }
 

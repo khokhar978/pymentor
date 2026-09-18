@@ -17,6 +17,7 @@ try:
     from pymentor.backend.deps import require_password_changed
     from pymentor.backend.database import get_connection, log_event, get_student_daily_quota, create_or_reset_learning_report, save_learning_report, mark_learning_report_failed
     from pymentor.backend.ai_mentor import evaluate_code, generate_learning_report
+    from pymentor.backend.hint_friction import compute_effective_level
 except ImportError:
     from backend.config import SUBMIT_COOLDOWN_SECONDS
     from backend import state
@@ -26,6 +27,7 @@ except ImportError:
     from backend.deps import require_password_changed
     from backend.database import get_connection, log_event, get_student_daily_quota, create_or_reset_learning_report, save_learning_report, mark_learning_report_failed
     from backend.ai_mentor import evaluate_code, generate_learning_report
+    from backend.hint_friction import compute_effective_level
 
 logger = logging.getLogger("pymentor")
 
@@ -36,6 +38,9 @@ router = APIRouter(prefix="/api", tags=["session"])
 def start_session(req: SessionStartRequest, student_id: int = Depends(require_password_changed)):
     conn = get_connection()
     cursor = conn.cursor()
+    cursor.execute("SELECT default_help_level FROM students WHERE id = ?", (student_id,))
+    st_row = cursor.fetchone()
+    default_hl = (st_row["default_help_level"] if st_row else 1) or 1
 
     cursor.execute("""
     SELECT id, help_level, status
@@ -47,15 +52,11 @@ def start_session(req: SessionStartRequest, student_id: int = Depends(require_pa
 
     if session:
         session_id = session["id"]
-        cursor.execute("""
-        UPDATE sessions SET help_level = ?, last_heartbeat_at = datetime('now', 'localtime'), updated_at = datetime('now', 'localtime') WHERE id = ?
-        """, (req.help_level, session_id))
-        conn.commit()
     else:
         cursor.execute("""
         INSERT INTO sessions (student_id, problem_id, help_level, last_heartbeat_at)
         VALUES (?, ?, ?, datetime('now', 'localtime'))
-        """, (student_id, req.problem_id, req.help_level))
+        """, (student_id, req.problem_id, default_hl))
         conn.commit()
         session_id = cursor.lastrowid
 
@@ -66,6 +67,15 @@ def start_session(req: SessionStartRequest, student_id: int = Depends(require_pa
     ORDER BY attempt_number ASC
     """, (session_id,))
     submissions = [dict(r) for r in cursor.fetchall()]
+
+    # Compute server-enforced hint friction level based on attempt count
+    friction = compute_effective_level(len(submissions), default_hl)
+    effective_hl = friction["effective_level"]
+
+    cursor.execute("""
+    UPDATE sessions SET help_level = ?, last_heartbeat_at = datetime('now', 'localtime'), updated_at = datetime('now', 'localtime') WHERE id = ?
+    """, (effective_hl, session_id))
+    conn.commit()
 
     # Retrieve last_code and time_spent_seconds from session
     cursor.execute("SELECT last_code, time_spent_seconds FROM sessions WHERE id = ?", (session_id,))
@@ -80,15 +90,16 @@ def start_session(req: SessionStartRequest, student_id: int = Depends(require_pa
         session_id=session_id,
         problem_id=req.problem_id,
         event_type="session_start",
-        event_data={"help_level": req.help_level}
+        event_data={"help_level": effective_hl}
     )
-    logger.info(f"[STUDENT SESSION] Started: Student ID={student_id} opened Problem ID={req.problem_id} (Session #{session_id}, Help L{req.help_level})")
+    logger.info(f"[STUDENT SESSION] Started: Student ID={student_id} opened Problem ID={req.problem_id} (Session #{session_id}, Help L{effective_hl})")
 
     is_solved = any(s["is_correct"] == 1 for s in submissions)
 
     return {
         "session_id": session_id,
-        "help_level": req.help_level,
+        "help_level": effective_hl,
+        "hint_friction": friction,
         "attempts_count": len(submissions),
         "is_solved": is_solved,
         "last_code": last_code,
@@ -275,7 +286,11 @@ def submit_code(req: SubmitCodeRequest, student_id: int = Depends(require_passwo
         )
 
     problem_id = session["problem_id"]
-    help_level = req.help_level or session["help_level"]
+
+    # Query student default_help_level
+    cursor.execute("SELECT default_help_level FROM students WHERE id = ?", (student_id,))
+    st_row = cursor.fetchone()
+    default_hl = (st_row["default_help_level"] if st_row else 1) or 1
 
     cursor.execute("""
     SELECT title, topic, difficulty, description, sample_input, sample_output, ai_rubric,
@@ -294,6 +309,10 @@ def submit_code(req: SubmitCodeRequest, student_id: int = Depends(require_passwo
     """, (req.session_id,))
     history = [dict(r) for r in cursor.fetchall()]
     attempt_number = len(history) + 1
+
+    # Server-enforced ratio-based hint friction (e.g. 3 Baby Steps -> 2 Guided -> 1 Challenge)
+    friction_current = compute_effective_level(len(history), default_hl)
+    help_level = friction_current["effective_level"]
 
     eval_start = time.time()
     eval_result = evaluate_code(
@@ -318,14 +337,14 @@ def submit_code(req: SubmitCodeRequest, student_id: int = Depends(require_passwo
     db_ai_response = eval_result.get("placeholder_text", feedback) if store_as_placeholder else feedback
 
     cursor.execute("""
-    INSERT INTO submissions (session_id, code, ai_response, is_correct, attempt_number, model_used, simulated_output, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
-    """, (req.session_id, code, db_ai_response, is_correct, attempt_number, model_used, req.simulated_output or ""))
+    INSERT INTO submissions (session_id, code, ai_response, is_correct, attempt_number, model_used, simulated_output, help_level, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+    """, (req.session_id, code, db_ai_response, is_correct, attempt_number, model_used, req.simulated_output or "", help_level))
 
     if is_correct:
-        cursor.execute("UPDATE sessions SET status = 'solved', last_code = ?, updated_at = datetime('now', 'localtime') WHERE id = ?", (code, req.session_id,))
+        cursor.execute("UPDATE sessions SET status = 'solved', last_code = ?, help_level = ?, updated_at = datetime('now', 'localtime') WHERE id = ?", (code, help_level, req.session_id,))
     else:
-        cursor.execute("UPDATE sessions SET last_code = ?, updated_at = datetime('now', 'localtime') WHERE id = ?", (code, req.session_id,))
+        cursor.execute("UPDATE sessions SET last_code = ?, help_level = ?, updated_at = datetime('now', 'localtime') WHERE id = ?", (code, help_level, req.session_id,))
 
     conn.commit()
 
@@ -383,6 +402,10 @@ def submit_code(req: SubmitCodeRequest, student_id: int = Depends(require_passwo
     result_label = "SOLVED" if is_correct else "IN_PROGRESS"
     logger.info(f"[EVAL] Submit Attempt #{attempt_number}: Student='{session['student_name']}' (Sec {session['student_section']}, Roll {session['student_roll']}) Problem='{problem['title']}' -> Result={result_label} Model='{model_used}' ({eval_duration_ms}ms)")
 
+    # Compute hint friction state for the NEXT attempt
+    friction_next = compute_effective_level(attempt_number, default_hl)
+    level_stepped = bool(friction_next["effective_level"] != help_level)
+
     # Stamp cooldown clock at guidance completion so student has full cooldown window after reading hint
     state.submit_cooldowns[student_id] = time.time()
 
@@ -394,5 +417,8 @@ def submit_code(req: SubmitCodeRequest, student_id: int = Depends(require_passwo
         "time_spent_seconds": total_time_spent,
         "error": eval_result.get("error"),
         "quota": get_student_daily_quota(student_id),
-        "has_report": has_report
+        "has_report": has_report,
+        "used_help_level": help_level,
+        "hint_friction": friction_next,
+        "level_stepped": level_stepped
     }

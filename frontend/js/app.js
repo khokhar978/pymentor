@@ -1,5 +1,6 @@
 import { getCurrentStudent, requireAuth } from './shared/auth.js';
 import { apiFetch } from './shared/api.js';
+import { initNavbarStreak, updateNavbarStreakBadge } from './shared/streak.js';
 
 /**
  * Python Practice — Practice Page (app.js)
@@ -46,6 +47,10 @@ const el = {
 
     // Toolbar
     levelSelect:         document.getElementById('levelSelect'),
+    hintLevelIndicator:  document.getElementById('hintLevelIndicator'),
+    hintLevelIcon:       document.getElementById('hintLevelIcon'),
+    hintLevelLabel:      document.getElementById('hintLevelLabel'),
+    hintLevelProgress:   document.getElementById('hintLevelProgress'),
     runBtn:              document.getElementById('runBtn'),
     runText:             document.getElementById('runText'),
     runSpinner:          document.getElementById('runSpinner'),
@@ -119,6 +124,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initMonaco();
     setupListeners();
     loadStudentIdentity();
+    initNavbarStreak();
     await loadDefaultHelpLevel();
     initPyodideWorker();
     initHeartbeat();
@@ -502,9 +508,6 @@ function setupListeners() {
     };
     if (el.switchStudentBtn) el.switchStudentBtn.addEventListener('click', handleProfileClick);
     if (el.studentBadge) el.studentBadge.addEventListener('click', handleProfileClick);
-    if (el.levelSelect) el.levelSelect.addEventListener('change', () => {
-        state.helpLevel = parseInt(el.levelSelect.value, 10);
-    });
 
     // Auto-suggestion toggle (💡)
     const suggestToggleBtn = document.getElementById('suggestToggleBtn');
@@ -761,11 +764,43 @@ function loadStudentIdentity() {
     // Initialize default guidance level from student's saved preference
     const defaultLevel = parseInt(state.student.default_help_level, 10) || 1;
     state.helpLevel = defaultLevel;
-    if (el.levelSelect) {
-        el.levelSelect.value = String(defaultLevel);
+    const initialIcons = { 1: '🟢', 2: '🟡', 3: '🔴' };
+    const initialNames = { 1: 'Baby Steps', 2: 'Guided', 3: 'Challenge' };
+    if (el.hintLevelIcon) el.hintLevelIcon.textContent = initialIcons[defaultLevel] || '🟢';
+    if (el.hintLevelLabel) el.hintLevelLabel.textContent = initialNames[defaultLevel] || 'Baby Steps';
+    if (el.hintLevelProgress) {
+        el.hintLevelProgress.textContent = defaultLevel === 1 ? '1/3' : (defaultLevel === 2 ? '1/2' : 'Active');
     }
 
     updateStudentDisplay();
+}
+
+function updateHintFrictionDisplay(friction, isStepped = false) {
+    if (!friction) return;
+    if (el.hintLevelIcon) el.hintLevelIcon.textContent = friction.level_icon || '🟢';
+    if (el.hintLevelLabel) el.hintLevelLabel.textContent = friction.level_label || 'Baby Steps';
+    if (el.hintLevelProgress) {
+        if (friction.total_in_band) {
+            const used = (friction.used_in_band || 0) + 1;
+            el.hintLevelProgress.textContent = `${used}/${friction.total_in_band}`;
+            el.hintLevelProgress.classList.remove('hidden');
+        } else {
+            el.hintLevelProgress.textContent = 'Active';
+        }
+    }
+    if (el.hintLevelIndicator && friction.progress_text) {
+        el.hintLevelIndicator.title = `Guidance Level: ${friction.level_label} (Cycle ${friction.cycle || 1}) — ${friction.progress_text}`;
+        if (isStepped) {
+            el.hintLevelIndicator.style.transition = 'all 0.3s ease';
+            el.hintLevelIndicator.style.boxShadow = '0 0 10px rgba(234, 179, 8, 0.6)';
+            setTimeout(() => {
+                if (el.hintLevelIndicator) el.hintLevelIndicator.style.boxShadow = '';
+            }, 2500);
+        }
+    }
+    if (friction.effective_level) {
+        state.helpLevel = friction.effective_level;
+    }
 }
 
 async function loadDefaultHelpLevel() {
@@ -776,11 +811,6 @@ async function loadDefaultHelpLevel() {
             const data = await res.json();
             const lvl = data.student?.default_help_level;
             if (lvl && lvl >= 1 && lvl <= 3) {
-                const currentLocal = parseInt(state.student.default_help_level, 10) || 1;
-                if (state.helpLevel === currentLocal) {
-                    state.helpLevel = lvl;
-                    if (el.levelSelect) el.levelSelect.value = String(lvl);
-                }
                 state.student.default_help_level = lvl;
                 try {
                     const localStudent = JSON.parse(localStorage.getItem('pymentor_student') || '{}');
@@ -945,6 +975,9 @@ async function startSession() {
         state.sessionId     = session.session_id;
         state.attemptsCount = session.attempts_count || 0;
         updateAttemptDisplay();
+        if (session.hint_friction) {
+            updateHintFrictionDisplay(session.hint_friction);
+        }
 
         // Restore saved code: check local draft first, then server database last_code
         const savedDraft = localStorage.getItem('pymentor_draft_' + state.problemId);
@@ -1078,6 +1111,11 @@ async function getGuidance() {
             updateQuotaDisplay(result.quota);
         }
 
+        // Update scaffolded hint friction indicator
+        if (result.hint_friction) {
+            updateHintFrictionDisplay(result.hint_friction, result.level_stepped);
+        }
+
         state.attemptsCount = result.attempt_number || (state.attemptsCount + 1);
         updateAttemptDisplay();
 
@@ -1102,6 +1140,12 @@ async function getGuidance() {
             updateTimerDisplay();
             el.guidanceStatus.innerHTML = '<span class="status-solved">Solved &#10003;</span>';
             triggerConfetti();
+
+            // Refresh streak badge on solve
+            apiFetch('/api/student/streak')
+                .then(r => r.ok ? r.json() : null)
+                .then(st => { if (st) updateNavbarStreakBadge(st); })
+                .catch(() => {});
 
             // Show View Report button if backend confirms report is being generated
             if (result.has_report) {

@@ -16,12 +16,12 @@ try:
     from pymentor.backend import config, state
     from pymentor.backend.database import init_db
     from pymentor.backend.github_backup import sync_from_github_on_startup, backup_to_github, is_github_configured
-    from pymentor.backend.routers import pages, content, auth, session, telemetry, admin, reports
+    from pymentor.backend.routers import pages, content, auth, session, telemetry, admin, reports, leaderboard
 except ImportError:
     from backend import config, state
     from backend.database import init_db
     from backend.github_backup import sync_from_github_on_startup, backup_to_github, is_github_configured
-    from backend.routers import pages, content, auth, session, telemetry, admin, reports
+    from backend.routers import pages, content, auth, session, telemetry, admin, reports, leaderboard
 
 # Configure basic file logging to logs.txt
 class SafeStreamHandler(logging.StreamHandler):
@@ -160,6 +160,7 @@ app.include_router(session.router)
 app.include_router(telemetry.router)
 app.include_router(admin.router)
 app.include_router(reports.router)
+app.include_router(leaderboard.router)
 
 # Backward-compatibility aliases for existing imports
 ADMIN_SECRET = config.ADMIN_SECRET
