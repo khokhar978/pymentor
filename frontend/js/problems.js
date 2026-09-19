@@ -8,6 +8,7 @@ import { getCurrentStudent } from './shared/auth.js';
 import { apiFetch } from './shared/api.js';
 import { formatDuration, escapeHtml as esc } from './shared/utils.js';
 import { initNavbarStreak } from './shared/streak.js';
+import { initNotifications } from './shared/notifications.js';
 
 let progressMap = {};       // { [problem_id]: { status, time_spent_seconds } }
 let allTopicsData = [];     // Array of topic objects
@@ -22,6 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadAll();
     loadLeaderboard();
     initNavbarStreak();
+    initNotifications();
 });
 
 // Re-fetch progress when returning to the problems dashboard via browser back/forward cache (bfcache)

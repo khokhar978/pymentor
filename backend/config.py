@@ -20,7 +20,7 @@ load_dotenv(dotenv_path=ENV_PATH)
 load_dotenv()
 
 # Admin Secret Verification (Fail-Closed)
-ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "").strip()
+ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "").strip().strip('\'"')
 if not ADMIN_SECRET or ADMIN_SECRET == "default-admin-secret-change-me":
     logger.critical(
         "CRITICAL: ADMIN_SECRET is not configured or still set to default placeholder in .env. "

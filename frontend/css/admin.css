@@ -860,3 +860,17 @@ input:checked + .toggle-slider:before { transform: translateX(20px); }
 
 #adminToast.success { border-color: var(--admin-emerald); }
 #adminToast.error { border-color: var(--admin-rose); }
+
+/* Announcements & Groups Admin Helpers */
+.notif-tab-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.55rem 1rem;
+    font-size: 0.85rem;
+}
+
+.group-student-row:hover {
+    background: rgba(255, 255, 255, 0.06) !important;
+}
+

@@ -456,15 +456,15 @@ select, input, textarea { font-family: inherit; }
 }
 
 .lb-body {
-    padding: 4px 0;
-    max-height: 420px;
+    padding: 2px 0;
+    max-height: 540px;
     overflow-y: auto;
 }
 
 .lb-row {
     display: flex;
     align-items: center;
-    padding: 8px 12px;
+    padding: 6.5px 12px;
     gap: 10px;
     font-size: 12.5px;
     transition: background 0.15s;
@@ -2118,3 +2118,511 @@ body.is-resizing .guidance-body {
     color: var(--accent);
 }
 .btn-report-action.hidden { display: none; }
+
+/* ─────────────────────────────────────────────────────────────
+   NOTIFICATIONS & ANNOUNCEMENTS SYSTEM
+   ───────────────────────────────────────────────────────────── */
+
+/* 1. Top Alert Banner */
+.pymentor-banner-container {
+    width: 100%;
+    position: relative;
+    z-index: 999;
+}
+
+.pymentor-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 10px 24px;
+    font-size: 13.5px;
+    line-height: 1.45;
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease;
+    border-bottom: 1px solid transparent;
+}
+
+.pymentor-banner.slide-up {
+    transform: translateY(-100%);
+    opacity: 0;
+}
+
+.pymentor-banner.banner-normal {
+    background: linear-gradient(90deg, rgba(59, 130, 246, 0.12) 0%, rgba(99, 102, 241, 0.14) 100%);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom-color: rgba(99, 102, 241, 0.3);
+    color: var(--text-primary);
+}
+
+.pymentor-banner.banner-critical {
+    background: linear-gradient(90deg, rgba(239, 68, 68, 0.15) 0%, rgba(245, 158, 11, 0.15) 100%);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom-color: rgba(239, 68, 68, 0.35);
+    color: var(--text-primary);
+}
+
+.pb-content {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+}
+
+.pb-icon {
+    font-size: 18px;
+    flex-shrink: 0;
+}
+
+.pb-text {
+    flex: 1;
+}
+
+.pb-title {
+    font-weight: 700;
+    margin-right: 6px;
+    letter-spacing: -0.01em;
+}
+
+.pb-dismiss {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+}
+
+.pb-dismiss:hover {
+    background: rgba(255, 255, 255, 0.22);
+    transform: scale(1.02);
+}
+
+/* 2. Header Bell Icon & Badge */
+.notification-bell-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    padding: 0;
+}
+
+.notification-bell-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--accent);
+}
+
+.notification-bell-btn.has-unread {
+    color: var(--accent);
+}
+
+.notification-bell-btn.has-unread svg {
+    animation: bell-swing 3s infinite ease-in-out;
+    transform-origin: top center;
+}
+
+@keyframes bell-swing {
+    0%, 70%, 100% { transform: rotate(0deg); }
+    75% { transform: rotate(14deg); }
+    80% { transform: rotate(-14deg); }
+    85% { transform: rotate(8deg); }
+    90% { transform: rotate(-8deg); }
+    95% { transform: rotate(4deg); }
+}
+
+.notification-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    border-radius: 9px;
+    background: linear-gradient(135deg, #ef4444, #f43f5e);
+    color: #ffffff;
+    font-size: 10.5px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(239, 68, 68, 0.45);
+    border: 2px solid var(--bg-main);
+    animation: badge-pulse 2s infinite ease-in-out;
+}
+
+@keyframes badge-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.12); }
+}
+
+/* 3. Notification Dropdown Drawer */
+.pymentor-notification-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(2px);
+    z-index: 9998;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+
+.pymentor-notification-backdrop.visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.pymentor-notification-drawer {
+    position: fixed;
+    top: 60px;
+    right: 20px;
+    width: 380px;
+    max-width: calc(100vw - 32px);
+    max-height: calc(100vh - 84px);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(-8px) scale(0.97);
+    pointer-events: none;
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.pymentor-notification-drawer.open {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    pointer-events: auto;
+}
+
+.pnd-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-surface);
+}
+
+.pnd-title-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.pnd-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.pnd-unread-pill {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 10px;
+    background: rgba(99, 102, 241, 0.18);
+    color: var(--brand);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.pnd-btn-text {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: background 0.15s ease;
+}
+
+.pnd-btn-text:hover {
+    background: var(--accent-light);
+}
+
+.pnd-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.pnd-list::-webkit-scrollbar {
+    width: 4px;
+}
+
+.pnd-list::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+.pnd-empty {
+    padding: 40px 20px;
+    text-align: center;
+}
+
+.pnd-empty-icon {
+    font-size: 34px;
+    margin-bottom: 8px;
+}
+
+.pnd-empty-text {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.pnd-empty-sub {
+    font-size: 12px;
+    color: var(--text-faint);
+}
+
+.pnd-item {
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    transition: all 0.15s ease;
+}
+
+.pnd-item.unread {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.07) 0%, rgba(56, 189, 248, 0.04) 100%);
+    border-color: rgba(99, 102, 241, 0.3);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+.pnd-item.read {
+    opacity: 0.8;
+}
+
+.pnd-item.read:hover {
+    opacity: 1;
+}
+
+.pnd-item-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+
+.pnd-item-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--bg-muted);
+    color: var(--text-secondary);
+}
+
+.pnd-item.type-personal .pnd-item-badge {
+    background: rgba(16, 185, 129, 0.14);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.pnd-item.type-banner .pnd-item-badge {
+    background: rgba(245, 158, 11, 0.14);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.pnd-item-time {
+    font-size: 11.5px;
+    color: var(--text-faint);
+}
+
+.pnd-item-title {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.pnd-item-body {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+}
+
+.pnd-item-actions {
+    margin-top: 8px;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.pnd-item-dismiss {
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.pnd-item-dismiss:hover {
+    background: var(--accent-light);
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
+/* 4. Slide-in Toast Popups */
+.pymentor-toast-container {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-width: 360px;
+    width: calc(100vw - 48px);
+    pointer-events: none;
+}
+
+.pymentor-toast {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    padding: 14px 16px;
+    pointer-events: auto;
+    opacity: 0;
+    transform: translateY(20px) scale(0.95);
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.pymentor-toast::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 4px;
+    height: 100%;
+    background: var(--accent);
+}
+
+.pymentor-toast.toast-personal::before {
+    background: linear-gradient(180deg, #10b981, #06b6d4);
+}
+
+.pymentor-toast.priority-critical::before {
+    background: linear-gradient(180deg, #ef4444, #f59e0b);
+}
+
+.pymentor-toast.visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+}
+
+.pt-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+
+.pt-badge {
+    font-size: 11px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-primary);
+}
+
+.pt-time {
+    font-size: 11px;
+    color: var(--text-faint);
+    margin-left: auto;
+    margin-right: 8px;
+}
+
+.pt-close {
+    background: none;
+    border: none;
+    font-size: 18px;
+    line-height: 1;
+    color: var(--text-faint);
+    cursor: pointer;
+    padding: 0 4px;
+    border-radius: 4px;
+    transition: color 0.15s ease;
+}
+
+.pt-close:hover {
+    color: var(--text-primary);
+}
+
+.pt-title {
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.pt-body {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+    margin-bottom: 8px;
+}
+
+.pt-footer {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.pt-action-btn {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 12px;
+    border-radius: 6px;
+    background: var(--accent);
+    color: #ffffff;
+    border: none;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+}
+
+.pt-action-btn:hover {
+    opacity: 0.9;
+}
+

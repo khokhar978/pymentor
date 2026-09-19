@@ -342,6 +342,78 @@ def init_db():
     except Exception as e:
         logging.getLogger("pymentor.database").warning(f"Could not load student rate limits into state: {e}")
 
+    # ── Notification and Group Management System ──────────────────────
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE NOT NULL,
+        description TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT (datetime('now', 'localtime'))
+    );
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS group_members (
+        group_id INTEGER NOT NULL,
+        student_id INTEGER NOT NULL,
+        added_at TIMESTAMP DEFAULT (datetime('now', 'localtime')),
+        PRIMARY KEY (group_id, student_id),
+        FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+        FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+    );
+    """)
+
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_group_members_student ON group_members(student_id);")
+
+    # Seed default groups for sections if groups table is empty
+    try:
+        cursor.execute("SELECT COUNT(*) as cnt FROM groups")
+        if cursor.fetchone()["cnt"] == 0:
+            cursor.execute("SELECT DISTINCT section FROM students WHERE section IS NOT NULL AND TRIM(section) != '' ORDER BY section")
+            sections = [r["section"] for r in cursor.fetchall()]
+            for sec in sections:
+                cursor.execute("INSERT OR IGNORE INTO groups (name, description) VALUES (?, ?)", (f"Section {sec}", f"All students enrolled in Section {sec}"))
+                cursor.execute("SELECT id FROM groups WHERE name = ?", (f"Section {sec}",))
+                g_row = cursor.fetchone()
+                if g_row:
+                    gid = g_row["id"]
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO group_members (group_id, student_id)
+                        SELECT ?, id FROM students WHERE section = ?
+                    """, (gid, sec))
+            conn.commit()
+    except Exception as e:
+        logging.getLogger("pymentor.database").warning(f"Could not seed default section groups: {e}")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL DEFAULT 'announcement',
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        target TEXT NOT NULL DEFAULT 'all',
+        priority TEXT NOT NULL DEFAULT 'normal',
+        is_active INTEGER DEFAULT 1,
+        expires_at TIMESTAMP,
+        created_by TEXT DEFAULT 'admin',
+        created_at TIMESTAMP DEFAULT (datetime('now', 'localtime'))
+    );
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS notification_reads (
+        notification_id INTEGER NOT NULL,
+        student_id INTEGER NOT NULL,
+        read_at TIMESTAMP DEFAULT (datetime('now', 'localtime')),
+        PRIMARY KEY (notification_id, student_id),
+        FOREIGN KEY (notification_id) REFERENCES notifications(id) ON DELETE CASCADE,
+        FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+    );
+    """)
+
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_notifications_target ON notifications(target, is_active);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_notification_reads_student ON notification_reads(student_id);")
+
     conn.commit()
     conn.close()
 

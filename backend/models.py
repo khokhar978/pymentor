@@ -183,3 +183,41 @@ class GitHubConfigRequest(BaseModel):
     repo: Optional[str] = None
     branch: Optional[str] = "main"
 
+
+# ─────────────────────────────────────────────
+# NOTIFICATION & GROUP MODELS
+# ─────────────────────────────────────────────
+
+class CreateNotificationRequest(BaseModel):
+    type: str = Field("announcement", pattern="^(banner|announcement|personal)$")
+    title: str = Field(..., min_length=1, max_length=200)
+    message: str = Field(..., min_length=1, max_length=5000)
+    target: str = Field("all", max_length=100)
+    priority: str = Field("normal", pattern="^(low|normal|high|critical)$")
+    expires_at: Optional[str] = None
+
+
+class UpdateNotificationRequest(BaseModel):
+    title: Optional[str] = None
+    message: Optional[str] = None
+    target: Optional[str] = None
+    priority: Optional[str] = None
+    is_active: Optional[bool] = None
+    expires_at: Optional[str] = None
+
+
+class CreateGroupRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = ""
+    student_ids: Optional[list[int]] = []
+
+
+class UpdateGroupRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+class GroupMembersRequest(BaseModel):
+    student_ids: list[int]
+
+

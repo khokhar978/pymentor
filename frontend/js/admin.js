@@ -92,7 +92,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 localStorage.removeItem('pymentor_admin_secret');
                 state.secret = '';
                 loginOverlay.classList.remove('hidden');
-                loginError.textContent = "Invalid Admin Secret Key.";
+                let errDetail = "Invalid Admin Secret Key.";
+                try {
+                    const errJson = await res.json();
+                    if (errJson && errJson.detail) errDetail = errJson.detail;
+                } catch (_) {}
+                loginError.textContent = errDetail;
                 loginError.style.display = 'block';
             }
         } catch (err) {
@@ -124,6 +129,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // ──────────────────────────────────────────────
     const routeTitles = {
         '#overview': 'Operations Overview',
+        '#notifications': 'Announcements & Groups',
         '#problems': 'Problem Studio & Curriculum',
         '#topics': 'Topics & Module Management',
         '#students': 'Student Account Directory',
@@ -135,6 +141,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const routeViews = {
         '#overview': 'viewOverview',
+        '#notifications': 'viewNotifications',
         '#problems': 'viewProblems',
         '#topics': 'viewTopics',
         '#students': 'viewStudents',
@@ -171,7 +178,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         // View-specific on-demand data load
-        if (targetViewId === 'viewProblems') loadProblemsView();
+        if (targetViewId === 'viewNotifications') loadNotificationsView();
+        else if (targetViewId === 'viewProblems') loadProblemsView();
         else if (targetViewId === 'viewTopics') loadTopicsView();
         else if (targetViewId === 'viewStudents') loadStudentsView();
         else if (targetViewId === 'viewExport') loadBackupsView();
@@ -1812,8 +1820,639 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }, 15000);
 
+        // ──────────────────────────────────────────────
+        // NOTIFICATIONS & GROUPS MANAGEMENT
+        // ──────────────────────────────────────────────
+        let cachedTargets = { groups: [], sections: [], students: [] };
+        let activeGroupIdForMembers = null;
+        let allStudentsForGroupModal = [];
+        let currentGroupMemberIds = new Set();
+
+        const tabBtnAnnouncements = document.getElementById('tabBtnAnnouncements');
+        const tabBtnGroups = document.getElementById('tabBtnGroups');
+        const subviewAnnouncements = document.getElementById('subviewAnnouncements');
+        const subviewGroups = document.getElementById('subviewGroups');
+
+        if (tabBtnAnnouncements && tabBtnGroups) {
+            tabBtnAnnouncements.addEventListener('click', () => {
+                tabBtnAnnouncements.className = 'btn btn-primary notif-tab-btn';
+                tabBtnGroups.className = 'btn btn-secondary notif-tab-btn';
+                if (subviewAnnouncements) subviewAnnouncements.style.display = 'block';
+                if (subviewGroups) subviewGroups.style.display = 'none';
+            });
+
+            tabBtnGroups.addEventListener('click', () => {
+                tabBtnGroups.className = 'btn btn-primary notif-tab-btn';
+                tabBtnAnnouncements.className = 'btn btn-secondary notif-tab-btn';
+                if (subviewAnnouncements) subviewAnnouncements.style.display = 'none';
+                if (subviewGroups) subviewGroups.style.display = 'block';
+                loadGroupsView();
+            });
+        }
+
+        async function loadNotificationsView() {
+            await Promise.all([
+                loadTargetOptions(),
+                fetchAdminNotifications(),
+                loadGroupsCount()
+            ]);
+        }
+
+        async function loadGroupsCount() {
+            try {
+                const res = await fetch('/api/admin/groups', {
+                    headers: { 'X-Admin-Secret': state.secret }
+                });
+                if (!res.ok) return;
+                const data = await res.json();
+                const badge = document.getElementById('notifGroupCountBadge');
+                if (badge && data.groups) {
+                    badge.textContent = data.groups.length;
+                }
+            } catch (_) {}
+        }
+
+        async function loadTargetOptions() {
+            try {
+                const res = await fetch('/api/admin/targets', {
+                    headers: { 'X-Admin-Secret': state.secret }
+                });
+                if (!res.ok) return;
+                cachedTargets = await res.json();
+
+                const secOptgroup = document.getElementById('optgroupSections');
+                if (secOptgroup) {
+                    secOptgroup.innerHTML = (cachedTargets.sections || []).map(s =>
+                        `<option value="section:${s}">Section ${s}</option>`
+                    ).join('');
+                }
+
+                const grpOptgroup = document.getElementById('optgroupGroups');
+                if (grpOptgroup) {
+                    grpOptgroup.innerHTML = (cachedTargets.groups || []).map(g =>
+                        `<option value="group:${g.id}">${escapeHtml(g.name)} (${g.member_count} students)</option>`
+                    ).join('');
+                }
+
+                const stuOptgroup = document.getElementById('optgroupStudents');
+                if (stuOptgroup) {
+                    stuOptgroup.innerHTML = (cachedTargets.students || []).map(st =>
+                        `<option value="student:${st.id}">[Sec ${st.section}] ${st.roll_no} - ${escapeHtml(st.name)}</option>`
+                    ).join('');
+                }
+            } catch (err) {
+                console.error('Error loading notification targets:', err);
+            }
+        }
+
+        async function fetchAdminNotifications() {
+            const tableBody = document.getElementById('notifsTableBody');
+            if (!tableBody) return;
+
+            try {
+                const res = await fetch('/api/admin/notifications', {
+                    headers: { 'X-Admin-Secret': state.secret }
+                });
+                if (!res.ok) {
+                    tableBody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--admin-rose);padding:2rem;">Failed to load announcements</td></tr>';
+                    return;
+                }
+                const data = await res.json();
+                const notifs = data.notifications || [];
+
+                if (notifs.length === 0) {
+                    tableBody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--admin-text-muted);padding:2rem;">No announcements sent yet. Use the composer above to create one.</td></tr>';
+                    return;
+                }
+
+                tableBody.innerHTML = notifs.map(n => {
+                    const typeIcon = n.type === 'banner' ? '⚠️ Banner' : (n.type === 'personal' ? '💬 Personal' : '📢 Toast');
+                    const priorityColor = n.priority === 'critical' ? 'var(--admin-rose)' : (n.priority === 'high' ? 'var(--admin-amber)' : 'var(--admin-cyan)');
+                    const statusBadge = n.is_active
+                        ? '<span class="pill" style="background:rgba(34,197,94,0.15);color:var(--admin-emerald);">Active</span>'
+                        : '<span class="pill" style="background:rgba(239,68,68,0.15);color:var(--admin-rose);">Paused</span>';
+
+                    let targetDisplay = 'All Students';
+                    if (n.target.startsWith('section:')) targetDisplay = `Section ${n.target.split(':')[1]}`;
+                    else if (n.target.startsWith('group:')) {
+                        const gid = parseInt(n.target.split(':')[1], 10);
+                        const gObj = (cachedTargets.groups || []).find(g => g.id === gid);
+                        targetDisplay = gObj ? `Group: ${gObj.name}` : `Group #${gid}`;
+                    } else if (n.target.startsWith('student:')) {
+                        const sid = parseInt(n.target.split(':')[1], 10);
+                        const sObj = (cachedTargets.students || []).find(s => s.id === sid);
+                        targetDisplay = sObj ? `Student: ${sObj.name} (${sObj.roll_no})` : `Student #${sid}`;
+                    }
+
+                    return `
+                        <tr>
+                            <td><span class="pill" style="font-size:0.75rem;background:rgba(255,255,255,0.06);">${typeIcon}</span></td>
+                            <td style="max-width:260px;">
+                                <div style="font-weight:600;color:#fff;font-size:0.85rem;margin-bottom:2px;">${escapeHtml(n.title)}</div>
+                                <div style="font-size:0.75rem;color:var(--admin-text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(n.message)}">${escapeHtml(n.message)}</div>
+                            </td>
+                            <td><span style="font-size:0.8rem;color:#cbd5e1;">${escapeHtml(targetDisplay)}</span></td>
+                            <td><span style="font-size:0.8rem;font-weight:600;color:${priorityColor};text-transform:capitalize;">${n.priority}</span></td>
+                            <td>${statusBadge}</td>
+                            <td>
+                                <button class="btn btn-secondary btn-sm notif-stats-btn" data-id="${n.id}" data-title="${escapeHtml(n.title)}" style="font-size:0.75rem;padding:0.25rem 0.6rem;">
+                                    📊 ${n.read_count} reads
+                                </button>
+                            </td>
+                            <td style="font-size:0.75rem;color:var(--admin-text-muted);white-space:nowrap;">${n.created_at || ''}</td>
+                            <td>
+                                <div style="display:flex;gap:0.4rem;">
+                                    <button class="btn btn-secondary btn-sm notif-toggle-btn" data-id="${n.id}" data-active="${n.is_active ? '1' : '0'}" title="${n.is_active ? 'Pause notification' : 'Resume notification'}">
+                                        ${n.is_active ? 'Pause' : 'Resume'}
+                                    </button>
+                                    <button class="btn btn-danger btn-sm notif-delete-btn" data-id="${n.id}" title="Delete notification">
+                                        ✕
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+
+                // Attach button listeners
+                tableBody.querySelectorAll('.notif-stats-btn').forEach(btn => {
+                    btn.addEventListener('click', () => viewNotificationStats(btn.dataset.id, btn.dataset.title));
+                });
+                tableBody.querySelectorAll('.notif-toggle-btn').forEach(btn => {
+                    btn.addEventListener('click', () => toggleNotificationActive(btn.dataset.id, btn.dataset.active === '1'));
+                });
+                tableBody.querySelectorAll('.notif-delete-btn').forEach(btn => {
+                    btn.addEventListener('click', () => deleteNotification(btn.dataset.id));
+                });
+
+            } catch (err) {
+                console.error('Error fetching admin notifications:', err);
+                tableBody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--admin-rose);padding:2rem;">Error connecting to notifications API</td></tr>';
+            }
+        }
+
+        // Broadcast button
+        const broadcastNotifBtn = document.getElementById('broadcastNotifBtn');
+        if (broadcastNotifBtn) {
+            broadcastNotifBtn.addEventListener('click', async () => {
+                const title = (document.getElementById('notifTitleInput')?.value || '').trim();
+                const message = (document.getElementById('notifMessageInput')?.value || '').trim();
+                const type = document.getElementById('notifTypeSelect')?.value || 'announcement';
+                const priority = document.getElementById('notifPrioritySelect')?.value || 'normal';
+                const target = document.getElementById('notifTargetSelect')?.value || 'all';
+                const expiryVal = document.getElementById('notifExpiryInput')?.value;
+
+                if (!title) {
+                    showToast('Please enter an announcement title', 'error');
+                    document.getElementById('notifTitleInput')?.focus();
+                    return;
+                }
+                if (!message) {
+                    showToast('Please enter message body', 'error');
+                    document.getElementById('notifMessageInput')?.focus();
+                    return;
+                }
+
+                broadcastNotifBtn.disabled = true;
+                broadcastNotifBtn.textContent = 'Broadcasting...';
+
+                try {
+                    const res = await fetch('/api/admin/notifications', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-Admin-Secret': state.secret
+                        },
+                        body: JSON.stringify({
+                            title,
+                            message,
+                            type,
+                            priority,
+                            target,
+                            expires_at: expiryVal ? expiryVal.replace('T', ' ') + ':00' : null
+                        })
+                    });
+
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        showToast(err.detail || 'Failed to broadcast notification', 'error');
+                        return;
+                    }
+
+                    showToast('Broadcast sent to students successfully!');
+                    document.getElementById('notifTitleInput').value = '';
+                    document.getElementById('notifMessageInput').value = '';
+                    if (document.getElementById('notifExpiryInput')) document.getElementById('notifExpiryInput').value = '';
+                    await fetchAdminNotifications();
+                } catch (err) {
+                    showToast('Network error while broadcasting', 'error');
+                } finally {
+                    broadcastNotifBtn.disabled = false;
+                    broadcastNotifBtn.innerHTML = `
+                        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+                        <span>Send Broadcast</span>
+                    `;
+                }
+            });
+        }
+
+        const refreshNotifsBtn = document.getElementById('refreshNotifsBtn');
+        if (refreshNotifsBtn) {
+            refreshNotifsBtn.addEventListener('click', () => fetchAdminNotifications());
+        }
+
+        async function toggleNotificationActive(notifId, currentlyActive) {
+            try {
+                const res = await fetch(`/api/admin/notifications/${notifId}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Admin-Secret': state.secret
+                    },
+                    body: JSON.stringify({ is_active: !currentlyActive })
+                });
+                if (res.ok) {
+                    showToast(`Notification ${currentlyActive ? 'paused' : 'resumed'}`);
+                    fetchAdminNotifications();
+                } else {
+                    showToast('Failed to toggle status', 'error');
+                }
+            } catch (_) {
+                showToast('Error updating notification', 'error');
+            }
+        }
+
+        async function deleteNotification(notifId) {
+            if (!confirm('Are you sure you want to permanently delete this announcement and its read logs?')) return;
+            try {
+                const res = await fetch(`/api/admin/notifications/${notifId}`, {
+                    method: 'DELETE',
+                    headers: { 'X-Admin-Secret': state.secret }
+                });
+                if (res.ok) {
+                    showToast('Notification deleted');
+                    fetchAdminNotifications();
+                } else {
+                    showToast('Failed to delete notification', 'error');
+                }
+            } catch (_) {
+                showToast('Error deleting notification', 'error');
+            }
+        }
+
+        // View notification read stats
+        const notificationStatsModal = document.getElementById('notificationStatsModal');
+        const closeNotifStatsModalBtn = document.getElementById('closeNotifStatsModalBtn');
+        const closeNotifStatsBtn = document.getElementById('closeNotifStatsBtn');
+        if (closeNotifStatsModalBtn) closeNotifStatsModalBtn.addEventListener('click', () => notificationStatsModal?.classList.add('hidden'));
+        if (closeNotifStatsBtn) closeNotifStatsBtn.addEventListener('click', () => notificationStatsModal?.classList.add('hidden'));
+
+        async function viewNotificationStats(notifId, title) {
+            if (!notificationStatsModal) return;
+            notificationStatsModal.classList.remove('hidden');
+            const sub = document.getElementById('notifStatsSub');
+            if (sub) sub.textContent = `For: "${title}"`;
+            const tbody = document.getElementById('notifReadersTableBody');
+            if (tbody) tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:1.5rem;color:var(--admin-text-muted);">Loading reader list...</td></tr>';
+
+            try {
+                const res = await fetch(`/api/admin/notifications/${notifId}/stats`, {
+                    headers: { 'X-Admin-Secret': state.secret }
+                });
+                if (!res.ok) {
+                    if (tbody) tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--admin-rose);">Failed to load read stats</td></tr>';
+                    return;
+                }
+                const data = await res.json();
+                const readers = data.readers || [];
+
+                if (readers.length === 0) {
+                    if (tbody) tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:1.5rem;color:var(--admin-text-muted);">No students have acknowledged or read this announcement yet.</td></tr>';
+                    return;
+                }
+
+                if (tbody) {
+                    tbody.innerHTML = readers.map(r => `
+                        <tr>
+                            <td><code style="font-family:monospace;color:var(--admin-cyan);">${r.roll_no}</code></td>
+                            <td style="font-weight:600;color:#fff;">${escapeHtml(r.name)}</td>
+                            <td><span class="pill" style="font-size:0.75rem;">Sec ${r.section}</span></td>
+                            <td style="font-size:0.75rem;color:var(--admin-text-muted);">${r.read_at || ''}</td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (_) {
+                if (tbody) tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--admin-rose);">Error loading reader details</td></tr>';
+            }
+        }
+
+        // ── GROUPS MANAGEMENT ──────────────────────────
+        const createGroupModal = document.getElementById('createGroupModal');
+        const closeGroupModalBtn = document.getElementById('closeGroupModalBtn');
+        const cancelGroupModalBtn = document.getElementById('cancelGroupModalBtn');
+        const saveGroupModalBtn = document.getElementById('saveGroupModalBtn');
+        const openCreateGroupModalBtn = document.getElementById('openCreateGroupModalBtn');
+
+        if (openCreateGroupModalBtn) {
+            openCreateGroupModalBtn.addEventListener('click', () => {
+                document.getElementById('groupNameInput').value = '';
+                document.getElementById('groupDescInput').value = '';
+                createGroupModal?.classList.remove('hidden');
+            });
+        }
+        if (closeGroupModalBtn) closeGroupModalBtn.addEventListener('click', () => createGroupModal?.classList.add('hidden'));
+        if (cancelGroupModalBtn) cancelGroupModalBtn.addEventListener('click', () => createGroupModal?.classList.add('hidden'));
+
+        if (saveGroupModalBtn) {
+            saveGroupModalBtn.addEventListener('click', async () => {
+                const name = (document.getElementById('groupNameInput')?.value || '').trim();
+                const desc = (document.getElementById('groupDescInput')?.value || '').trim();
+                if (!name) {
+                    showToast('Group name is required', 'error');
+                    return;
+                }
+
+                try {
+                    const res = await fetch('/api/admin/groups', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-Admin-Secret': state.secret
+                        },
+                        body: JSON.stringify({ name, description: desc })
+                    });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        showToast(err.detail || 'Failed to create group', 'error');
+                        return;
+                    }
+                    showToast(`Group "${name}" created successfully!`);
+                    createGroupModal?.classList.add('hidden');
+                    loadGroupsView();
+                    loadTargetOptions();
+                } catch (_) {
+                    showToast('Error creating group', 'error');
+                }
+            });
+        }
+
+        async function loadGroupsView() {
+            const container = document.getElementById('groupsGridContainer');
+            if (!container) return;
+            container.innerHTML = '<div style="color:var(--admin-text-muted);padding:2rem;">Loading groups...</div>';
+
+            try {
+                const res = await fetch('/api/admin/groups', {
+                    headers: { 'X-Admin-Secret': state.secret }
+                });
+                if (!res.ok) {
+                    container.innerHTML = '<div style="color:var(--admin-rose);padding:2rem;">Failed to load groups.</div>';
+                    return;
+                }
+                const data = await res.json();
+                const groups = data.groups || [];
+
+                const badge = document.getElementById('notifGroupCountBadge');
+                if (badge) badge.textContent = groups.length;
+
+                if (groups.length === 0) {
+                    container.innerHTML = '<div style="color:var(--admin-text-muted);padding:2rem;">No student groups found. Click "Create New Group" to get started.</div>';
+                    return;
+                }
+
+                container.innerHTML = groups.map(g => {
+                    const isSectionGroup = g.name.startsWith('Section ');
+                    return `
+                        <div class="admin-card" style="display:flex;flex-direction:column;justify-content:space-between;padding:1.25rem;">
+                            <div>
+                                <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.5rem;">
+                                    <h4 style="color:#fff;margin:0;font-size:1rem;font-weight:700;">${escapeHtml(g.name)}</h4>
+                                    <span class="pill" style="background:rgba(99,102,241,0.15);color:var(--admin-violet);">${g.member_count} students</span>
+                                </div>
+                                <p style="color:var(--admin-text-muted);font-size:0.8rem;margin:0 0 1rem;min-height:36px;">
+                                    ${escapeHtml(g.description || (isSectionGroup ? 'Automatic section-based cohort' : 'Custom student cohort'))}
+                                </p>
+                            </div>
+                            <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--admin-card-border);padding-top:0.75rem;">
+                                <button class="btn btn-secondary btn-sm manage-group-btn" data-id="${g.id}" data-name="${escapeHtml(g.name)}" style="font-size:0.78rem;">
+                                    👥 Manage Members
+                                </button>
+                                ${!isSectionGroup ? `
+                                    <button class="btn btn-danger btn-sm delete-group-btn" data-id="${g.id}" data-name="${escapeHtml(g.name)}" style="font-size:0.78rem;">
+                                        Delete
+                                    </button>
+                                ` : '<span style="font-size:0.72rem;color:var(--admin-text-muted);">Default Cohort</span>'}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                container.querySelectorAll('.manage-group-btn').forEach(btn => {
+                    btn.addEventListener('click', () => openManageMembersModal(btn.dataset.id, btn.dataset.name));
+                });
+                container.querySelectorAll('.delete-group-btn').forEach(btn => {
+                    btn.addEventListener('click', () => deleteGroup(btn.dataset.id, btn.dataset.name));
+                });
+
+            } catch (err) {
+                container.innerHTML = '<div style="color:var(--admin-rose);padding:2rem;">Error fetching groups.</div>';
+            }
+        }
+
+        async function deleteGroup(groupId, groupName) {
+            if (!confirm(`Are you sure you want to delete the group "${groupName}"?`)) return;
+            try {
+                const res = await fetch(`/api/admin/groups/${groupId}`, {
+                    method: 'DELETE',
+                    headers: { 'X-Admin-Secret': state.secret }
+                });
+                if (res.ok) {
+                    showToast(`Group "${groupName}" deleted`);
+                    loadGroupsView();
+                    loadTargetOptions();
+                } else {
+                    showToast('Failed to delete group', 'error');
+                }
+            } catch (_) {
+                showToast('Error deleting group', 'error');
+            }
+        }
+
+        // Manage Members Modal
+        const groupMembersModal = document.getElementById('groupMembersModal');
+        const closeGroupMembersModalBtn = document.getElementById('closeGroupMembersModalBtn');
+        const cancelGroupMembersBtn = document.getElementById('cancelGroupMembersBtn');
+        const saveGroupMembersBtn = document.getElementById('saveGroupMembersBtn');
+        const groupStudentSearchInput = document.getElementById('groupStudentSearchInput');
+        const btnGroupSelectAll = document.getElementById('btnGroupSelectAll');
+        const btnGroupDeselectAll = document.getElementById('btnGroupDeselectAll');
+
+        if (closeGroupMembersModalBtn) closeGroupMembersModalBtn.addEventListener('click', () => groupMembersModal?.classList.add('hidden'));
+        if (cancelGroupMembersBtn) cancelGroupMembersBtn.addEventListener('click', () => groupMembersModal?.classList.add('hidden'));
+
+        async function openManageMembersModal(groupId, groupName) {
+            activeGroupIdForMembers = groupId;
+            if (!groupMembersModal) return;
+            groupMembersModal.classList.remove('hidden');
+
+            document.getElementById('groupMembersTitle').textContent = `Manage: ${groupName}`;
+            document.getElementById('groupMembersSub').textContent = 'Select or deselect students to include in this cohort.';
+            const listContainer = document.getElementById('groupMembersList');
+            if (listContainer) listContainer.innerHTML = '<div style="color:var(--admin-text-muted);padding:1.5rem;text-align:center;">Loading students...</div>';
+
+            try {
+                // Fetch group details (current members) and all students
+                const [groupRes, targetsRes] = await Promise.all([
+                    fetch(`/api/admin/groups/${groupId}`, { headers: { 'X-Admin-Secret': state.secret } }),
+                    fetch('/api/admin/targets', { headers: { 'X-Admin-Secret': state.secret } })
+                ]);
+
+                if (!groupRes.ok || !targetsRes.ok) {
+                    if (listContainer) listContainer.innerHTML = '<div style="color:var(--admin-rose);padding:1rem;">Failed to load group details</div>';
+                    return;
+                }
+
+                const groupData = await groupRes.json();
+                const targetsData = await targetsRes.json();
+
+                allStudentsForGroupModal = targetsData.students || [];
+                currentGroupMemberIds = new Set((groupData.members || []).map(m => m.id));
+
+                renderGroupStudentsList();
+            } catch (err) {
+                if (listContainer) listContainer.innerHTML = '<div style="color:var(--admin-rose);padding:1rem;">Error loading students</div>';
+            }
+        }
+
+        function renderGroupStudentsList(query = '') {
+            const listContainer = document.getElementById('groupMembersList');
+            if (!listContainer) return;
+
+            const q = query.toLowerCase().trim();
+            const filtered = allStudentsForGroupModal.filter(s =>
+                !q ||
+                s.name.toLowerCase().includes(q) ||
+                s.roll_no.toLowerCase().includes(q) ||
+                s.section.toLowerCase().includes(q)
+            );
+
+            if (filtered.length === 0) {
+                listContainer.innerHTML = '<div style="color:var(--admin-text-muted);padding:1rem;text-align:center;">No students matched search.</div>';
+                updateSelectedCountText();
+                return;
+            }
+
+            listContainer.innerHTML = filtered.map(s => {
+                const checked = currentGroupMemberIds.has(s.id) ? 'checked' : '';
+                return `
+                    <label style="display:flex;align-items:center;gap:0.6rem;padding:0.4rem 0.6rem;border-radius:6px;cursor:pointer;background:rgba(255,255,255,0.02);transition:background 0.1s;" class="group-student-row">
+                        <input type="checkbox" class="group-student-checkbox" data-id="${s.id}" ${checked}>
+                        <span class="pill" style="font-size:0.72rem;padding:1px 5px;">Sec ${s.section}</span>
+                        <code style="font-family:monospace;font-size:0.8rem;color:var(--admin-cyan);">${s.roll_no}</code>
+                        <span style="font-size:0.85rem;color:#cbd5e1;flex:1;">${escapeHtml(s.name)}</span>
+                    </label>
+                `;
+            }).join('');
+
+            listContainer.querySelectorAll('.group-student-checkbox').forEach(cb => {
+                cb.addEventListener('change', () => {
+                    const sid = parseInt(cb.dataset.id, 10);
+                    if (cb.checked) {
+                        currentGroupMemberIds.add(sid);
+                    } else {
+                        currentGroupMemberIds.delete(sid);
+                    }
+                    updateSelectedCountText();
+                });
+            });
+
+            updateSelectedCountText();
+        }
+
+        function updateSelectedCountText() {
+            const txt = document.getElementById('groupSelectedCountText');
+            if (txt) {
+                txt.textContent = `${currentGroupMemberIds.size} of ${allStudentsForGroupModal.length} students selected`;
+            }
+        }
+
+        if (groupStudentSearchInput) {
+            groupStudentSearchInput.addEventListener('input', (e) => {
+                renderGroupStudentsList(e.target.value);
+            });
+        }
+
+        if (btnGroupSelectAll) {
+            btnGroupSelectAll.addEventListener('click', () => {
+                const q = (groupStudentSearchInput?.value || '').toLowerCase().trim();
+                allStudentsForGroupModal.forEach(s => {
+                    if (!q || s.name.toLowerCase().includes(q) || s.roll_no.toLowerCase().includes(q) || s.section.toLowerCase().includes(q)) {
+                        currentGroupMemberIds.add(s.id);
+                    }
+                });
+                renderGroupStudentsList(groupStudentSearchInput?.value || '');
+            });
+        }
+
+        if (btnGroupDeselectAll) {
+            btnGroupDeselectAll.addEventListener('click', () => {
+                const q = (groupStudentSearchInput?.value || '').toLowerCase().trim();
+                if (!q) {
+                    currentGroupMemberIds.clear();
+                } else {
+                    allStudentsForGroupModal.forEach(s => {
+                        if (s.name.toLowerCase().includes(q) || s.roll_no.toLowerCase().includes(q) || s.section.toLowerCase().includes(q)) {
+                            currentGroupMemberIds.delete(s.id);
+                        }
+                    });
+                }
+                renderGroupStudentsList(groupStudentSearchInput?.value || '');
+            });
+        }
+
+        if (saveGroupMembersBtn) {
+            saveGroupMembersBtn.addEventListener('click', async () => {
+                if (!activeGroupIdForMembers) return;
+                saveGroupMembersBtn.disabled = true;
+                saveGroupMembersBtn.textContent = 'Saving...';
+
+                try {
+                    const res = await fetch(`/api/admin/groups/${activeGroupIdForMembers}/members`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-Admin-Secret': state.secret
+                        },
+                        body: JSON.stringify({
+                            student_ids: Array.from(currentGroupMemberIds)
+                        })
+                    });
+
+                    if (!res.ok) {
+                        showToast('Failed to save group members', 'error');
+                        return;
+                    }
+
+                    showToast('Group membership updated successfully!');
+                    groupMembersModal?.classList.add('hidden');
+                    loadGroupsView();
+                    loadTargetOptions();
+                } catch (_) {
+                    showToast('Error saving group members', 'error');
+                } finally {
+                    saveGroupMembersBtn.disabled = false;
+                    saveGroupMembersBtn.textContent = 'Save Membership';
+                }
+            });
+        }
+
         // Click outside modal or drawer to close
-        [studentModal, problemDrawer, resetPwModal, bulkResetModal, addStudentModal, topicModal, apiKeyModal, studentRateLimitModal, githubConfigModal].forEach(m => {
+        const allAdminModals = [
+            studentModal, problemDrawer, resetPwModal, bulkResetModal,
+            addStudentModal, topicModal, apiKeyModal, studentRateLimitModal,
+            githubConfigModal, createGroupModal, groupMembersModal, notificationStatsModal
+        ];
+        allAdminModals.forEach(m => {
             if (m) {
                 m.addEventListener('click', (e) => {
                     if (e.target === m) m.classList.add('hidden');
@@ -1823,7 +2462,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
-                [studentModal, problemDrawer, resetPwModal, bulkResetModal, addStudentModal, topicModal, apiKeyModal, studentRateLimitModal, githubConfigModal].forEach(m => {
+                allAdminModals.forEach(m => {
                     if (m) m.classList.add('hidden');
                 });
             }

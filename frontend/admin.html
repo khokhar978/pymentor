@@ -61,6 +61,10 @@
                 </a>
 
                 <div class="nav-category">Administration</div>
+                <a href="#notifications" class="nav-link" data-view="viewNotifications">
+                    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                    <span>Announcements & Groups</span>
+                </a>
                 <a href="#students" class="nav-link" data-view="viewStudents">
                     <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                     <span>Student Accounts</span>
@@ -665,7 +669,144 @@
                         </div>
                     </div>
                 </section>
+                <!-- ══════════════════════════════════════════
+                     VIEW: ANNOUNCEMENTS & GROUPS (#notifications)
+                     ══════════════════════════════════════════ -->
+                <section id="viewNotifications" class="view-section">
+                    <!-- Tab Selector -->
+                    <div style="display: flex; gap: 0.5rem; margin-bottom: 1.25rem;">
+                        <button class="btn btn-primary notif-tab-btn" id="tabBtnAnnouncements" data-notif-tab="announcements">
+                            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                            <span>Announcements & Alerts</span>
+                        </button>
+                        <button class="btn btn-secondary notif-tab-btn" id="tabBtnGroups" data-notif-tab="groups">
+                            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                            <span>Student Groups (<span id="notifGroupCountBadge">0</span>)</span>
+                        </button>
+                    </div>
 
+                    <!-- SUBVIEW 1: Announcements & Alerts -->
+                    <div id="subviewAnnouncements">
+                        <!-- Composer Card -->
+                        <div class="admin-card" style="margin-bottom: 1.5rem;">
+                            <div class="card-header" style="margin-bottom: 1rem;">
+                                <div class="card-title">
+                                    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/></svg>
+                                    <span>Broadcast New Announcement / Alert</span>
+                                </div>
+                                <span class="pill" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8;">Real-Time Student Push</span>
+                            </div>
+
+                            <div style="display: grid; grid-template-columns: 1fr 1fr 1.2fr; gap: 1rem; margin-bottom: 1rem;">
+                                <div>
+                                    <label style="display: block; font-size: 0.8rem; color: var(--admin-text-muted); font-weight: 600; margin-bottom: 0.35rem;">Message Type</label>
+                                    <select id="notifTypeSelect" class="select-control" style="width: 100%; box-sizing: border-box;">
+                                        <option value="announcement">📢 Announcement (Toast Popup)</option>
+                                        <option value="banner">⚠️ Banner Alert (Top Alert Bar)</option>
+                                        <option value="personal">💬 Personal Review (Direct Note)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label style="display: block; font-size: 0.8rem; color: var(--admin-text-muted); font-weight: 600; margin-bottom: 0.35rem;">Priority Level</label>
+                                    <select id="notifPrioritySelect" class="select-control" style="width: 100%; box-sizing: border-box;">
+                                        <option value="normal">Normal (Standard)</option>
+                                        <option value="high">High (Prominent)</option>
+                                        <option value="critical">🚨 Critical (Urgent / Maintenance)</option>
+                                        <option value="low">Low (Muted)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label style="display: block; font-size: 0.8rem; color: var(--admin-text-muted); font-weight: 600; margin-bottom: 0.35rem;">Target Audience</label>
+                                    <select id="notifTargetSelect" class="select-control" style="width: 100%; box-sizing: border-box;">
+                                        <option value="all">🌍 All Students (Broadcast)</option>
+                                        <optgroup label="Sections" id="optgroupSections">
+                                            <!-- Loaded dynamically -->
+                                        </optgroup>
+                                        <optgroup label="Groups" id="optgroupGroups">
+                                            <!-- Loaded dynamically -->
+                                        </optgroup>
+                                        <optgroup label="Individual Student" id="optgroupStudents">
+                                            <!-- Loaded dynamically -->
+                                        </optgroup>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div style="margin-bottom: 1rem;">
+                                <label style="display: block; font-size: 0.8rem; color: var(--admin-text-muted); font-weight: 600; margin-bottom: 0.35rem;">Title / Headline</label>
+                                <input type="text" id="notifTitleInput" class="input-control" placeholder="e.g. Scheduled System Maintenance Tonight 10 PM - 12 AM" style="width: 100%; box-sizing: border-box;">
+                            </div>
+
+                            <div style="margin-bottom: 1rem;">
+                                <label style="display: block; font-size: 0.8rem; color: var(--admin-text-muted); font-weight: 600; margin-bottom: 0.35rem;">Message Body (Supports links and line breaks)</label>
+                                <textarea id="notifMessageInput" class="textarea-control" style="width: 100%; box-sizing: border-box; height: 90px;" placeholder="Write your announcement or personal feedback note here..."></textarea>
+                            </div>
+
+                            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                    <label style="font-size: 0.8rem; color: var(--admin-text-muted); font-weight: 600;">Optional Auto-Expiry:</label>
+                                    <input type="datetime-local" id="notifExpiryInput" class="input-control" style="font-size: 0.8rem; padding: 0.35rem 0.6rem;">
+                                </div>
+                                <button id="broadcastNotifBtn" class="btn btn-primary" style="padding: 0.6rem 1.4rem;">
+                                    <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+                                    <span>Send Broadcast</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Active & Past Announcements Table -->
+                        <div class="admin-card" style="padding: 0; overflow: hidden;">
+                            <div style="padding: 1rem 1.25rem; border-bottom: 1px solid var(--admin-card-border); display: flex; justify-content: space-between; align-items: center;">
+                                <div class="card-title">
+                                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                                    <span>Broadcast History & Read Analytics</span>
+                                </div>
+                                <button id="refreshNotifsBtn" class="btn btn-secondary btn-sm" title="Refresh notification list">
+                                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                                    <span>Refresh</span>
+                                </button>
+                            </div>
+
+                            <div class="data-table-wrapper">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Type</th>
+                                            <th>Title & Message</th>
+                                            <th>Target Audience</th>
+                                            <th>Priority</th>
+                                            <th>Status</th>
+                                            <th>Read Metrics</th>
+                                            <th>Created</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="notifsTableBody">
+                                        <tr><td colspan="8" style="text-align: center; color: var(--admin-text-muted); padding: 2rem;">Loading announcements...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SUBVIEW 2: Student Groups Manager -->
+                    <div id="subviewGroups" style="display: none;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
+                            <div>
+                                <h3 style="color: #fff; margin: 0 0 0.25rem; font-size: 1.15rem; font-weight: 700;">Student Groups & Cohorts</h3>
+                                <p style="color: var(--admin-text-muted); font-size: 0.85rem; margin: 0;">Target notifications, announcements, or reviews to customized student cohorts.</p>
+                            </div>
+                            <button id="openCreateGroupModalBtn" class="btn btn-primary btn-sm">
+                                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                <span>Create New Group</span>
+                            </button>
+                        </div>
+
+                        <div id="groupsGridContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1rem;">
+                            <!-- Populated via JS -->
+                        </div>
+                    </div>
+                </section>
             </main>
         </div>
     </div>
@@ -1061,6 +1202,95 @@
                     <button id="cancelGithubConfigBtn" class="btn btn-secondary btn-sm">Cancel</button>
                     <button id="saveGithubConfigBtn" class="btn btn-primary btn-sm">Save & Verify Connection</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ──────────────────────────────────────────────
+         MODAL: CREATE / EDIT GROUP
+         ────────────────────────────────────────────── -->
+    <div id="createGroupModal" class="modal-overlay hidden">
+        <div class="modal-card" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3 style="color: #fff; margin: 0; font-size: 1.15rem; font-weight: 700;" id="groupModalTitle">Create Student Group</h3>
+                <button class="modal-close" id="closeGroupModalBtn">&times;</button>
+            </div>
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; font-size: 0.8rem; color: var(--admin-text-muted); font-weight: 600; margin-bottom: 0.35rem;">Group Name</label>
+                <input type="text" id="groupNameInput" class="input-control" placeholder="e.g. Loops Remedial Cohort" style="width: 100%; box-sizing: border-box;">
+            </div>
+            <div style="margin-bottom: 1.25rem;">
+                <label style="display: block; font-size: 0.8rem; color: var(--admin-text-muted); font-weight: 600; margin-bottom: 0.35rem;">Description</label>
+                <input type="text" id="groupDescInput" class="input-control" placeholder="e.g. Students needing extra guidance on while loops" style="width: 100%; box-sizing: border-box;">
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 0.6rem;">
+                <button id="cancelGroupModalBtn" class="btn btn-secondary">Cancel</button>
+                <button id="saveGroupModalBtn" class="btn btn-primary">Create Group</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ──────────────────────────────────────────────
+         MODAL: MANAGE GROUP MEMBERS
+         ────────────────────────────────────────────── -->
+    <div id="groupMembersModal" class="modal-overlay hidden">
+        <div class="modal-card" style="max-width: 640px;">
+            <div class="modal-header">
+                <div>
+                    <h3 style="color: #fff; margin: 0; font-size: 1.15rem; font-weight: 700;" id="groupMembersTitle">Manage Group Members</h3>
+                    <p style="color: var(--admin-text-muted); font-size: 0.8rem; margin: 0.2rem 0 0;" id="groupMembersSub"></p>
+                </div>
+                <button class="modal-close" id="closeGroupMembersModalBtn">&times;</button>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; gap: 0.5rem; flex-wrap: wrap;">
+                <input type="text" id="groupStudentSearchInput" class="input-control" placeholder="Search by name, roll no, or section..." style="flex: 1; min-width: 200px; font-size: 0.8rem; padding: 0.4rem 0.6rem;">
+                <div style="display: flex; gap: 0.4rem;">
+                    <button class="btn btn-secondary btn-sm" id="btnGroupSelectAll">Select All</button>
+                    <button class="btn btn-secondary btn-sm" id="btnGroupDeselectAll">Clear All</button>
+                </div>
+            </div>
+            <div id="groupMembersList" style="max-height: 340px; overflow-y: auto; border: 1px solid var(--admin-card-border); border-radius: 8px; padding: 0.5rem; display: flex; flex-direction: column; gap: 0.35rem; background: rgba(0,0,0,0.2);">
+                <!-- Populated via JS -->
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem;">
+                <span id="groupSelectedCountText" style="font-size: 0.8rem; color: var(--admin-text-muted);">0 students selected</span>
+                <div style="display: flex; gap: 0.6rem;">
+                    <button id="cancelGroupMembersBtn" class="btn btn-secondary">Cancel</button>
+                    <button id="saveGroupMembersBtn" class="btn btn-primary">Save Membership</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ──────────────────────────────────────────────
+         MODAL: NOTIFICATION READ STATS
+         ────────────────────────────────────────────── -->
+    <div id="notificationStatsModal" class="modal-overlay hidden">
+        <div class="modal-card" style="max-width: 580px;">
+            <div class="modal-header">
+                <div>
+                    <h3 style="color: #fff; margin: 0; font-size: 1.15rem; font-weight: 700;">Announcement Read Analytics</h3>
+                    <p style="color: var(--admin-text-muted); font-size: 0.8rem; margin: 0.2rem 0 0;" id="notifStatsSub"></p>
+                </div>
+                <button class="modal-close" id="closeNotifStatsModalBtn">&times;</button>
+            </div>
+            <div class="data-table-wrapper" style="max-height: 360px; overflow-y: auto;">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Roll No</th>
+                            <th>Student Name</th>
+                            <th>Section</th>
+                            <th>Read Timestamp</th>
+                        </tr>
+                    </thead>
+                    <tbody id="notifReadersTableBody">
+                        <!-- Populated via JS -->
+                    </tbody>
+                </table>
+            </div>
+            <div style="display: flex; justify-content: flex-end; margin-top: 1rem;">
+                <button id="closeNotifStatsBtn" class="btn btn-secondary">Close</button>
             </div>
         </div>
     </div>

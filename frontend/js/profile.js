@@ -6,12 +6,14 @@
 import { requireAuth, clearAuth } from './shared/auth.js';
 import { escapeHtml as esc, formatLocalDateTime } from './shared/utils.js';
 import { initNavbarStreak, updateNavbarStreakBadge } from './shared/streak.js';
+import { initNotifications } from './shared/notifications.js';
 
 document.addEventListener('DOMContentLoaded', () => {
     const student = requireAuth('/login');
     if (!student) return;
 
     initNavbarStreak();
+    initNotifications();
 
     // Set Header UI
     document.getElementById('navNameDisplay').textContent = student.name;

@@ -1,6 +1,7 @@
 import { getCurrentStudent, requireAuth } from './shared/auth.js';
 import { apiFetch } from './shared/api.js';
 import { initNavbarStreak, updateNavbarStreakBadge } from './shared/streak.js';
+import { initNotifications } from './shared/notifications.js';
 
 /**
  * Python Practice — Practice Page (app.js)
@@ -125,12 +126,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupListeners();
     loadStudentIdentity();
     initNavbarStreak();
+    initNotifications();
     await loadDefaultHelpLevel();
     initPyodideWorker();
     initHeartbeat();
 
     const params = new URLSearchParams(window.location.search);
-    const pid = params.get('problem');
+    const pid = params.get('problem') || params.get('id');
     if (pid) {
         state.problemId = parseInt(pid, 10);
         await loadProblem(state.problemId);
